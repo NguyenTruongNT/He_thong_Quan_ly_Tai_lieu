@@ -107,15 +107,23 @@ class SyncEngine {
     required this.database,
     required this.remote,
     required this.fileStore,
-    required this.ownerId,
+    required String ownerId,
     this.downloadRemoteFiles = true,
     this.maxRetries = 5,
-  });
+  }) : _ownerId = ownerId;
 
   final AppDatabase database;
   final RemoteSyncService remote;
   final LocalFileStore fileStore;
-  final String ownerId;
+  String _ownerId;
+  String get ownerId => _ownerId;
+
+  void updateOwnerId(String newOwnerId) {
+    if (newOwnerId.trim().isNotEmpty) {
+      _ownerId = newOwnerId.trim();
+    }
+  }
+
   final bool downloadRemoteFiles;
   final int maxRetries;
 

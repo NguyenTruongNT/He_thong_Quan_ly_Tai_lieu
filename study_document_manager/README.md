@@ -98,9 +98,9 @@ study_document_manager/
 - Dart SDK `>= 3.0.0`
 
 ### Các bước khởi chạy
-1. Mở terminal tại thư mục dự án:
+1. Mở terminal tại thư mục ứng dụng (không phải thư mục gốc repository):
    ```bash
-   cd study_document_manager
+   cd .\study_document_manager
    ```
 2. Cài đặt các gói phụ thuộc:
    ```bash
@@ -110,6 +110,10 @@ study_document_manager/
    ```bash
    flutter run
    ```
+
+Firebase bị tắt mặc định để có thể chạy ứng dụng không cần thiết lập Firebase.
+Xem [hướng dẫn Supabase và kiểm thử chia sẻ](./SUPABASE_SETUP.md) để thiết lập
+schema/RLS, tạo tài khoản demo và hiểu rõ phần nào hiện chỉ chạy cục bộ.
 
 ---
 

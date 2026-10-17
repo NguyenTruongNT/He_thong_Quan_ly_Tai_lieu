@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:study_document_manager/database/app_database.dart';
 import 'package:study_document_manager/struct/models/document_models.dart';
+import 'package:study_document_manager/struct/models/document_permission.dart';
 
 // =====================================================================
 // [KIẾN TRÚC CASHEW - KIỂM THỬ TẦNG DỮ LIỆU (DATA LAYER TEST)]
@@ -117,6 +118,79 @@ void main() {
         sharedDocument.title,
       );
     });
+
+    test(
+      'Sharing enforces viewer, editor, and private access for three users',
+      () async {
+        final now = DateTime.now();
+        final privateDocument = DocumentModel(
+          id: 'permission_test_doc',
+          title: 'Tài liệu kiểm thử phân quyền',
+          subjectId: 'sub_swe',
+          type: DocumentType.reference,
+          notes: 'Quyền owner, viewer và editor.',
+          createdDate: now,
+          updatedDate: now,
+        );
+        await db.insertDocument(privateDocument);
+        await db.shareDocument(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-1',
+          role: DocumentPermissionRole.viewer,
+        );
+        await db.shareDocument(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-2',
+          role: DocumentPermissionRole.editor,
+        );
+
+        await db.setActiveOwner('demo-user-1');
+        expect(await db.getDocumentById(privateDocument.id), isNotNull);
+        expect(await db.canEditDocument(privateDocument.id), isFalse);
+        expect(
+          await db.updateDocument(
+            privateDocument.copyWith(title: 'Viewer should not edit'),
+          ),
+          0,
+        );
+        expect(await db.deleteDocument(privateDocument.id), 0);
+        expect(
+          () => db.shareDocument(
+            documentId: privateDocument.id,
+            targetUserId: 'demo-user-3',
+            role: DocumentPermissionRole.viewer,
+          ),
+          throwsStateError,
+        );
+
+        await db.setActiveOwner('demo-user-2');
+        expect(await db.getDocumentById(privateDocument.id), isNotNull);
+        expect(await db.canEditDocument(privateDocument.id), isTrue);
+        expect(
+          await db.updateDocument(
+            privateDocument.copyWith(title: 'Editor can edit'),
+          ),
+          1,
+        );
+        expect(await db.deleteDocument(privateDocument.id), 0);
+
+        await db.setActiveOwner('demo-user-3');
+        expect(await db.getDocumentById(privateDocument.id), isNull);
+        expect(
+          (await db.searchDocuments(query: 'phân quyền'))
+              .any((document) => document.id == privateDocument.id),
+          isFalse,
+        );
+
+        await db.setActiveOwner('local');
+        await db.revokeDocumentShare(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-1',
+        );
+        await db.setActiveOwner('demo-user-1');
+        expect(await db.getDocumentById(privateDocument.id), isNull);
+      },
+    );
 
     test('5. Tìm kiếm tài liệu theo từ khóa và bộ lọc (Search)', () async {
       // Tìm kiếm theo từ khóa có trong tiêu đề

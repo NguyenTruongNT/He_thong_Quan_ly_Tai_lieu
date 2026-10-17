@@ -10,6 +10,7 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:uuid/uuid.dart';
 
 import '../struct/models/document_models.dart';
+import '../struct/models/document_permission.dart';
 import '../struct/models/sync_models.dart';
 import 'tables.dart';
 
@@ -32,6 +33,7 @@ class AppDatabase {
   final List<String> _memorySubjectOwners = [];
   final List<DocumentModel> _memoryDocuments = [];
   final List<String> _memoryDocumentOwners = [];
+  final List<DocumentPermission> _memoryPermissions = [];
 
   final List<DeleteLogModel> _memoryDeleteLogs = [];
   final List<SyncOutboxEntry> _memoryOutbox = [];
@@ -68,8 +70,8 @@ class AppDatabase {
     await notifySubjectsChanged();
   }
 
-  /// v3 adds sync tables; v4 adds owner-scoped records.
-  static const int schemaVersion = 4;
+  /// v5 adds document sharing permissions.
+  static const int schemaVersion = 5;
 
   /// Khởi tạo và mở cơ sở dữ liệu
   Future<void> init({bool isInMemory = false}) async {
@@ -134,6 +136,8 @@ class AppDatabase {
     await db.execute(SyncStateTable.createTableSql);
     await db.execute(SubjectTable.createOwnerIndexSql);
     await db.execute(DocumentTable.createOwnerIndexSql);
+    await db.execute(DocumentPermissionTable.createTableSql);
+    await db.execute(DocumentPermissionTable.createRecipientIndexSql);
     await _seedDefaultData(db);
   }
 
@@ -171,6 +175,10 @@ class AppDatabase {
         'ALTER TABLE ${DocumentTable.tableName} '
         'ADD COLUMN ${DocumentTable.colOwnerId} TEXT NOT NULL DEFAULT \'local\'',
       );
+    }
+    if (oldVersion < 5) {
+      await db.execute(DocumentPermissionTable.createTableSql);
+      await db.execute(DocumentPermissionTable.createRecipientIndexSql);
     }
     await db.execute(SubjectTable.createOwnerIndexSql);
     await db.execute(DocumentTable.createOwnerIndexSql);
@@ -333,6 +341,7 @@ class AppDatabase {
     _memoryDocumentOwners.addAll(
       List.filled(sharedDocuments.length, sharedOwnerId),
     );
+    _memoryPermissions.clear();
 
     _memoryDeleteLogs.clear();
     _memoryOutbox.clear();
@@ -482,10 +491,11 @@ class AppDatabase {
   /// [CHỨC NĂNG 2] Cập nhật tài liệu (Update)
   Future<int> updateDocument(DocumentModel document) async {
     final existing = await getDocumentById(document.id);
-    if (existing == null || existing.isShared) {
+    if (existing == null || existing.isShared || !await canEditDocument(document.id)) {
       return 0;
     }
-    if (await getSubjectById(document.subjectId) == null) {
+    if (document.subjectId != existing.subjectId &&
+        await getSubjectById(document.subjectId) == null) {
       throw StateError(
         'Không thể lưu tài liệu vào môn học không thuộc tài khoản này.',
       );
@@ -493,9 +503,6 @@ class AppDatabase {
 
     if (_useMemoryFallback) {
       final index = _memoryDocuments.indexWhere((d) => d.id == document.id);
-      if (index >= 0 && _memoryDocumentOwners[index] != _activeOwnerId) {
-        return 0;
-      }
       if (index >= 0) {
         _memoryDocuments[index] = document;
         await notifyDocumentsChanged();
@@ -506,9 +513,9 @@ class AppDatabase {
 
     final result = await db.update(
       DocumentTable.tableName,
-      {...document.toMap(), DocumentTable.colOwnerId: _activeOwnerId},
-      where: '${DocumentTable.colId} = ? AND ${DocumentTable.colOwnerId} = ?',
-      whereArgs: [document.id, _activeOwnerId],
+      document.toMap(),
+      where: '${DocumentTable.colId} = ?',
+      whereArgs: [document.id],
     );
     await notifyDocumentsChanged();
     return result;
@@ -544,21 +551,163 @@ class AppDatabase {
   Future<DocumentModel?> getDocumentById(String id) async {
     if (_useMemoryFallback) {
       final index = _memoryDocuments.indexWhere((d) => d.id == id);
-      return index < 0 ||
-              (_memoryDocumentOwners[index] != _activeOwnerId &&
-                  _memoryDocumentOwners[index] != sharedOwnerId)
-          ? null
-          : _memoryDocuments[index];
+      if (index < 0) return null;
+      final ownerId = _memoryDocumentOwners[index];
+      if (ownerId == _activeOwnerId ||
+          ownerId == sharedOwnerId ||
+          _memoryPermissions.any(
+            (permission) =>
+                permission.documentId == id &&
+                permission.sharedWithUserId == _activeOwnerId,
+          )) {
+        return _memoryDocuments[index];
+      }
+      return null;
     }
 
     final results = await db.query(
       DocumentTable.tableName,
-      where: '${DocumentTable.colId} = ? AND ${DocumentTable.colOwnerId} IN (?, ?)',
-      whereArgs: [id, _activeOwnerId, sharedOwnerId],
+      where: '''${DocumentTable.colId} = ? AND (
+        ${DocumentTable.colOwnerId} IN (?, ?) OR EXISTS (
+          SELECT 1 FROM ${DocumentPermissionTable.tableName} p
+          WHERE p.document_id = ${DocumentTable.tableName}.${DocumentTable.colId}
+            AND p.shared_with_user_id = ?
+        )
+      )''',
+      whereArgs: [id, _activeOwnerId, sharedOwnerId, _activeOwnerId],
       limit: 1,
     );
     if (results.isEmpty) return null;
     return DocumentModel.fromMap(results.first);
+  }
+
+  Future<String?> getDocumentOwnerId(String id) async {
+    if (_useMemoryFallback) {
+      final index = _memoryDocuments.indexWhere((document) => document.id == id);
+      return index < 0 ? null : _memoryDocumentOwners[index];
+    }
+    final rows = await db.query(
+      DocumentTable.tableName,
+      columns: [DocumentTable.colOwnerId],
+      where: '${DocumentTable.colId} = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first[DocumentTable.colOwnerId] as String;
+  }
+
+  Future<DocumentPermission?> getPermissionForCurrentUser(
+    String documentId,
+  ) async {
+    if (_useMemoryFallback) {
+      for (final permission in _memoryPermissions) {
+        if (permission.documentId == documentId &&
+            permission.sharedWithUserId == _activeOwnerId) {
+          return permission;
+        }
+      }
+      return null;
+    }
+    final rows = await db.query(
+      DocumentPermissionTable.tableName,
+      where: 'document_id = ? AND shared_with_user_id = ?',
+      whereArgs: [documentId, _activeOwnerId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : DocumentPermission.fromMap(rows.first);
+  }
+
+  Future<List<DocumentPermission>> getDocumentPermissions(
+    String documentId,
+  ) async {
+    if (_useMemoryFallback) {
+      return _memoryPermissions
+          .where((permission) => permission.documentId == documentId)
+          .toList();
+    }
+    final rows = await db.query(
+      DocumentPermissionTable.tableName,
+      where: 'document_id = ? AND owner_id = ?',
+      whereArgs: [documentId, _activeOwnerId],
+      orderBy: 'created_at',
+    );
+    return rows.map(DocumentPermission.fromMap).toList();
+  }
+
+  Future<bool> canManageSharing(String documentId) async {
+    final document = await getDocumentById(documentId);
+    return document != null &&
+        !document.isShared &&
+        await getDocumentOwnerId(documentId) == _activeOwnerId;
+  }
+
+  Future<bool> canEditDocument(String documentId) async {
+    if (await getDocumentOwnerId(documentId) == _activeOwnerId) return true;
+    final permission = await getPermissionForCurrentUser(documentId);
+    return permission?.role == DocumentPermissionRole.editor;
+  }
+
+  Future<void> shareDocument({
+    required String documentId,
+    required String targetUserId,
+    required DocumentPermissionRole role,
+  }) async {
+    if (targetUserId.trim().isEmpty) {
+      throw ArgumentError('Mã tài khoản nhận chia sẻ không được để trống.');
+    }
+    if (!await canManageSharing(documentId)) {
+      throw StateError('Chỉ chủ sở hữu mới có thể quản lý quyền chia sẻ.');
+    }
+    if (targetUserId.trim() == _activeOwnerId) {
+      throw ArgumentError('Không thể chia sẻ tài liệu cho chính tài khoản này.');
+    }
+    final permission = DocumentPermission(
+      documentId: documentId,
+      ownerId: _activeOwnerId,
+      sharedWithUserId: targetUserId.trim(),
+      role: role,
+      createdAt: DateTime.now(),
+    );
+    if (_useMemoryFallback) {
+      _memoryPermissions.removeWhere(
+        (current) =>
+            current.documentId == documentId &&
+            current.sharedWithUserId == targetUserId.trim(),
+      );
+      _memoryPermissions.add(permission);
+      await notifyDocumentsChanged();
+      return;
+    }
+    await db.insert(
+      DocumentPermissionTable.tableName,
+      permission.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await notifyDocumentsChanged();
+  }
+
+  Future<void> revokeDocumentShare({
+    required String documentId,
+    required String targetUserId,
+  }) async {
+    if (!await canManageSharing(documentId)) {
+      throw StateError('Chỉ chủ sở hữu mới có thể quản lý quyền chia sẻ.');
+    }
+    if (_useMemoryFallback) {
+      _memoryPermissions.removeWhere(
+        (permission) =>
+            permission.documentId == documentId &&
+            permission.sharedWithUserId == targetUserId,
+      );
+      await notifyDocumentsChanged();
+      return;
+    }
+    await db.delete(
+      DocumentPermissionTable.tableName,
+      where: 'document_id = ? AND owner_id = ? AND shared_with_user_id = ?',
+      whereArgs: [documentId, _activeOwnerId, targetUserId],
+    );
+    await notifyDocumentsChanged();
   }
 
   /// Lấy toàn bộ danh sách tài liệu
@@ -570,7 +719,12 @@ class AppDatabase {
       final list = <DocumentModel>[
         for (var i = 0; i < _memoryDocuments.length; i++)
           if ((_memoryDocumentOwners[i] == _activeOwnerId ||
-                  _memoryDocumentOwners[i] == sharedOwnerId) &&
+                  _memoryDocumentOwners[i] == sharedOwnerId ||
+                  _memoryPermissions.any(
+                    (permission) =>
+                        permission.documentId == _memoryDocuments[i].id &&
+                        permission.sharedWithUserId == _activeOwnerId,
+                  )) &&
               (includeDeleted || !_memoryDocuments[i].isDeleted))
             _memoryDocuments[i],
       ];
@@ -581,11 +735,14 @@ class AppDatabase {
 
     final results = await db.query(
       DocumentTable.tableName,
-      where: includeDeleted
-          ? '${DocumentTable.colOwnerId} IN (?, ?)'
-          : '${DocumentTable.colIsDeleted} = 0 AND '
-                '${DocumentTable.colOwnerId} IN (?, ?)',
-      whereArgs: [_activeOwnerId, sharedOwnerId],
+      where: '''${includeDeleted ? '1 = 1' : '${DocumentTable.colIsDeleted} = 0'} AND (
+        ${DocumentTable.colOwnerId} IN (?, ?) OR EXISTS (
+          SELECT 1 FROM ${DocumentPermissionTable.tableName} p
+          WHERE p.document_id = ${DocumentTable.tableName}.${DocumentTable.colId}
+            AND p.shared_with_user_id = ?
+        )
+      )''',
+      whereArgs: [_activeOwnerId, sharedOwnerId, _activeOwnerId],
       orderBy: '${DocumentTable.colUpdatedDate} DESC',
     );
     return results.map((row) => DocumentModel.fromMap(row)).toList();
@@ -603,7 +760,12 @@ class AppDatabase {
       var list = <DocumentModel>[
         for (var i = 0; i < _memoryDocuments.length; i++)
           if ((_memoryDocumentOwners[i] == _activeOwnerId ||
-                  _memoryDocumentOwners[i] == sharedOwnerId) &&
+                  _memoryDocumentOwners[i] == sharedOwnerId ||
+                  _memoryPermissions.any(
+                    (permission) =>
+                        permission.documentId == _memoryDocuments[i].id &&
+                        permission.sharedWithUserId == _activeOwnerId,
+                  )) &&
               !_memoryDocuments[i].isDeleted)
             _memoryDocuments[i],
       ];
@@ -633,9 +795,13 @@ class AppDatabase {
 
     final conditions = <String>[
       '${DocumentTable.colIsDeleted} = 0',
-      '${DocumentTable.colOwnerId} IN (?, ?)',
+      '''(${DocumentTable.colOwnerId} IN (?, ?) OR EXISTS (
+        SELECT 1 FROM ${DocumentPermissionTable.tableName} p
+        WHERE p.document_id = ${DocumentTable.tableName}.${DocumentTable.colId}
+          AND p.shared_with_user_id = ?
+      ))''',
     ];
-    final args = <dynamic>[_activeOwnerId, sharedOwnerId];
+    final args = <dynamic>[_activeOwnerId, sharedOwnerId, _activeOwnerId];
 
 
     final trimmed = query.trim().toLowerCase();
@@ -707,7 +873,16 @@ class AppDatabase {
       final list = [
         for (var i = 0; i < _memorySubjects.length; i++)
           if (_memorySubjectOwners[i] == _activeOwnerId ||
-              _memorySubjectOwners[i] == sharedOwnerId)
+              _memorySubjectOwners[i] == sharedOwnerId ||
+              _memoryDocuments.asMap().entries.any(
+                (entry) =>
+                    entry.value.subjectId == _memorySubjects[i].id &&
+                    _memoryPermissions.any(
+                      (permission) =>
+                          permission.documentId == entry.value.id &&
+                          permission.sharedWithUserId == _activeOwnerId,
+                    ),
+              ))
             _memorySubjects[i],
       ];
       list.sort((a, b) => a.name.compareTo(b.name));
@@ -716,8 +891,14 @@ class AppDatabase {
 
     final results = await db.query(
       SubjectTable.tableName,
-      where: '${SubjectTable.colOwnerId} IN (?, ?)',
-      whereArgs: [_activeOwnerId, sharedOwnerId],
+      where: '''${SubjectTable.colOwnerId} IN (?, ?) OR EXISTS (
+        SELECT 1 FROM ${DocumentTable.tableName} d
+        JOIN ${DocumentPermissionTable.tableName} p
+          ON p.document_id = d.${DocumentTable.colId}
+        WHERE d.${DocumentTable.colSubjectId} = ${SubjectTable.tableName}.${SubjectTable.colId}
+          AND p.shared_with_user_id = ?
+      )''',
+      whereArgs: [_activeOwnerId, sharedOwnerId, _activeOwnerId],
       orderBy: '${SubjectTable.colName} ASC',
     );
     return results.map((row) => SubjectModel.fromMap(row)).toList();
@@ -726,17 +907,35 @@ class AppDatabase {
   Future<SubjectModel?> getSubjectById(String id) async {
     if (_useMemoryFallback) {
       final index = _memorySubjects.indexWhere((s) => s.id == id);
-      return index < 0 ||
-              (_memorySubjectOwners[index] != _activeOwnerId &&
-                  _memorySubjectOwners[index] != sharedOwnerId)
-          ? null
-          : _memorySubjects[index];
+      if (index < 0) return null;
+      final isSharedWithCurrentUser = _memoryDocuments.asMap().entries.any(
+        (entry) =>
+            entry.value.subjectId == id &&
+            _memoryPermissions.any(
+              (permission) =>
+                  permission.documentId == entry.value.id &&
+                  permission.sharedWithUserId == _activeOwnerId,
+            ),
+      );
+      return _memorySubjectOwners[index] == _activeOwnerId ||
+              _memorySubjectOwners[index] == sharedOwnerId ||
+              isSharedWithCurrentUser
+          ? _memorySubjects[index]
+          : null;
     }
 
     final results = await db.query(
       SubjectTable.tableName,
-      where: '${SubjectTable.colId} = ? AND ${SubjectTable.colOwnerId} IN (?, ?)',
-      whereArgs: [id, _activeOwnerId, sharedOwnerId],
+      where: '''${SubjectTable.colId} = ? AND (
+        ${SubjectTable.colOwnerId} IN (?, ?) OR EXISTS (
+          SELECT 1 FROM ${DocumentTable.tableName} d
+          JOIN ${DocumentPermissionTable.tableName} p
+            ON p.document_id = d.${DocumentTable.colId}
+          WHERE d.${DocumentTable.colSubjectId} = ${SubjectTable.tableName}.${SubjectTable.colId}
+            AND p.shared_with_user_id = ?
+        )
+      )''',
+      whereArgs: [id, _activeOwnerId, sharedOwnerId, _activeOwnerId],
       limit: 1,
     );
     if (results.isEmpty) return null;

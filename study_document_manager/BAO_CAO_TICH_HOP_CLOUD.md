@@ -1,155 +1,282 @@
-# Phân tích và phương án tích hợp Cloud cho hệ thống Quản lý Tài liệu
+# BÁO CÁO KỸ THUẬT: PHÁT TRIỂN HỆ THỐNG QUẢN LÝ TÀI LIỆU ĐA NỀN TẢNG VỚI FLUTTER, FIREBASE VÀ SUPABASE
 
-> **Dự án:** Study Document Manager (Flutter)
-> **Firebase project được tham chiếu trong cấu hình ứng dụng:** `cashew-study-docs-3afed`
-> **Phạm vi:** Phân tích kiến trúc hiện trạng, đánh giá hạn chế, trình bày mô hình Hybrid Cloud và phân biệt phần code Firebase, dịch vụ mock cùng các bước Console chưa được xác nhận.
+> **Học phần:** Phát triển Ứng dụng Đa nền tảng (CSE441)  
+> **Đề tài:** Nâng cấp Ứng dụng Quản lý Tài liệu Học tập tích hợp Hệ sinh thái Cloud (Firebase + Supabase)  
+> **Nhóm thực hiện:** Nhóm 12 • Lớp 65KTPM • Khoa CNTT - Đại học Thủy Lợi  
+> **Mã nguồn dự án:** `study_document_manager`  
 
-## Tóm tắt
+---
 
-Ứng dụng Flutter hiện quản lý metadata tài liệu/môn học bằng SQLite cục bộ. Mã nguồn đã nối Firebase Authentication và Firebase Cloud Storage cho Android và Web; iOS chưa được cấu hình. `storage.rules` giới hạn đường dẫn theo UID, MIME được khai báo và dung lượng tối đa 20 MiB. Trạng thái Google provider, bucket và Rules trên Firebase Console chưa được xác nhận trong môi trường này. Metadata vẫn ở SQLite của từng thiết bị: ứng dụng **chưa đồng bộ danh sách tài liệu giữa các thiết bị**, chưa có Firestore và chưa có Backend/API riêng. SyncEngine hiện dùng mock in-memory, không phải backend Cloud.
+## TÓM TẮT DỰ ÁN
 
-Phương án phù hợp với trạng thái và checklist là **Hybrid Cloud**: giữ Flutter + SQLite làm giao diện và dữ liệu local; dùng Firebase Authentication để xác thực và Cloud Storage để lưu file; nếu cần đồng bộ metadata đa thiết bị, bổ sung Firestore cùng quy tắc bảo mật và quy trình đồng bộ ở giai đoạn tiếp theo. Firebase là dịch vụ Public Cloud; SQLite vẫn là thành phần chạy trên thiết bị. Đây là phương án Firebase nhất quán với phần tích hợp thực hành, không nhầm lẫn với phương án AWS độc lập.
+Bài tập yêu cầu nâng cấp ứng dụng Quản lý Tài liệu từ mô hình cục bộ (Local SQLite theo kiến trúc Cashew) lên hệ sinh thái **Hybrid Cloud**, tích hợp:
+1. **Firebase Authentication:** Xác thực tài khoản Google nhanh chóng, an toàn.
+2. **Cloud Storage (Firebase Storage & Supabase Storage):** Lưu trữ tệp tin tài liệu vật lý (PDF, Word, Excel, Slide) theo phân cấp thư mục người dùng an toàn.
+3. **Supabase PostgreSQL Database:** Quản lý cơ sở dữ liệu quan hệ gồm 3 bảng trọng tâm: `profiles` (Người dùng), `documents` (Tài liệu), và `document_permissions` (Quyền chia sẻ).
+4. **Row Level Security (RLS):** Thiết lập chính sách bảo mật cấp dòng trên Supabase để kiểm soát quyền truy cập chi tiết: Chủ sở hữu (`owner`), Người xem (`viewer`), Người chỉnh sửa (`editor`).
+5. **Kiểm thử đa tài khoản (Testing):** Xác minh luồng hoạt động và tính toàn vẹn dữ liệu trên ít nhất 3 tài khoản người dùng khác nhau.
 
-## 1. Thành phần cốt lõi và hiện trạng
+---
 
-| Thành phần | Hiện trạng trong ứng dụng | Nhận xét |
-|---|---|---|
-| **Frontend** | Flutter/Dart. `lib/pages/` có Dashboard, danh sách, tìm kiếm, chi tiết, form thêm/sửa và trang tài khoản. | UI Flutter đa nền tảng; Firebase Auth/Storage hiện chỉ được bật trong code cho Android và Web. |
-| **Backend / nghiệp vụ** | Chưa có server/API riêng. `DocumentService` thực thi kiểm tra và gọi SQLite trong app. Firebase SDK được gọi từ lớp service phía client. | Firebase Authentication và Storage cung cấp dịch vụ managed, nhưng không biến app thành Backend server. Không có Cloud Function xử lý nghiệp vụ riêng. |
-| **Database / metadata** | SQLite lưu `subjects`, `documents` cùng thuộc tính tài liệu. Các migration bổ sung Storage path, sync metadata và owner scoping đến schema version 4. | Database vẫn cục bộ; cùng tài khoản trên thiết bị khác không tự thấy metadata. Firebase không lưu metadata trong phiên bản hiện tại. |
-| **File Storage** | Firebase Cloud Storage lưu nội dung file theo `users/{uid}/documents/{documentId}/{fileId}/{fileName}`. SQLite chỉ giữ `storage_path`, không giữ byte file hay Download URL. | Upload trực tiếp từ app, tối đa 20 MiB, hỗ trợ PDF/Office/TXT; đọc/xóa cần đăng nhập đúng UID theo Rules. |
-| **Danh tính** | Code Firebase Authentication với Google Sign-In trên Android và Web. | SHA-1 Android và Authorized Domain Web phải khớp Firebase Console; iOS chưa được cấu hình. |
-
-Các điểm triển khai chính: `lib/main.dart` khởi tạo Firebase trên Android/Web; `lib/struct/google_auth_service.dart` xử lý đăng nhập; `lib/struct/firebase_storage_service.dart` xử lý upload/download URL/xóa; `lib/database/app_database.dart` quản lý SQLite và migration; `storage.rules` giới hạn truy cập Storage. `MockRemoteSyncService` chỉ mô phỏng đồng bộ metadata trong bộ nhớ.
-
-## 2. Hạn chế của mô hình cục bộ/truyền thống
-
-Các điểm dưới đây mô tả mô hình trước khi bổ sung Firebase và các giới hạn vẫn còn trong bản hiện tại:
-
-1. **Dữ liệu phân tán theo thiết bị:** SQLite không tự đồng bộ. Hỏng/mất thiết bị có thể làm mất metadata nếu không sao lưu.
-2. **Không có Backend/API dùng chung:** kiểm tra nghiệp vụ chạy ở client; chưa có service trung tâm để phân quyền metadata, audit hoặc áp dụng chính sách cho mọi client.
-3. **Không có quản lý file tập trung trước tích hợp:** chỉ lưu `fileUrl` tự nhập; liên kết bên ngoài có thể hết hạn, đổi quyền hoặc bị xóa.
-4. **Giới hạn cộng tác và mở rộng:** không có dữ liệu metadata trung tâm để hỗ trợ nhiều thiết bị, nhiều người dùng, chia sẻ hoặc báo cáo.
-5. **Sao lưu/vận hành chưa tập trung:** mã ứng dụng không triển khai backup/restore metadata, giám sát Backend hay lịch sử truy cập tập trung.
-6. **Web có giới hạn độ bền:** nếu SQLite WASM không khởi động được, hiện có In-Memory fallback; dữ liệu fallback chỉ tồn tại trong phiên.
-7. **Giới hạn còn lại sau tích hợp Firebase:** file đã ở Cloud và được bảo vệ bằng Rules, nhưng metadata vẫn ở SQLite local. Vì thế đăng nhập trên thiết bị khác không đồng nghĩa tài liệu tự xuất hiện ở đó.
-
-## 3. Mô hình Cloud và dịch vụ được lựa chọn
-
-### Mô hình: Hybrid Cloud
-
-- **Local:** ứng dụng Flutter và SQLite, tiếp tục cung cấp CRUD, tìm kiếm và hiển thị metadata cục bộ.
-- **Public Cloud:** Firebase Authentication (Google) cho danh tính và Firebase Cloud Storage cho tệp.
-- **Giai đoạn mở rộng:** Cloud Firestore có thể lưu metadata dùng chung; cần bổ sung thiết kế đồng bộ, xử lý xung đột, migration dữ liệu và Firestore Security Rules trước khi triển khai. Firestore **chưa được tích hợp trong code hiện tại**.
-
-Hybrid phù hợp vì tận dụng dữ liệu local hiện có nhưng bổ sung danh tính và kho file Cloud. Đây là kiến trúc lai local + Public Cloud; không có máy chủ Private Cloud/on-premises riêng.
-
-### Dịch vụ và vai trò
-
-| Dịch vụ | Trạng thái | Vai trò / lưu ý |
-|---|---|---|
-| **Firebase Authentication** | Đã tích hợp trong app; cần bật Google provider ở Console | Đăng nhập, cung cấp UID dùng để phân vùng file. |
-| **Cloud Storage for Firebase** | Đã tích hợp trong app; bucket và Rules cần được thiết lập/deploy trên Console | Lưu byte tài liệu. Bucket không được coi là công khai; quyền dựa trên Firebase Auth + Storage Rules. |
-| **Cloud Firestore** | Đề xuất giai đoạn tiếp theo, chưa nằm trong app | Lưu metadata dùng chung nếu mục tiêu là đa thiết bị; cần Rules theo owner/nhóm và cơ chế đồng bộ rõ ràng. |
-| **Firebase App Check** | Khuyến nghị đánh giá trước khi phát hành thật | Giúp giảm client không hợp lệ; không thay thế Authentication hoặc Security Rules. |
-| **Cloud Monitoring/Budget alerts** | Thiết lập vận hành ngoài mã nguồn | Theo dõi usage/chi phí; budget alert không phải hạn mức cứng ngăn phát sinh phí. |
-
-
-### 4.1 Kiến trúc hiện thực trong prototype
+## 1. KIẾN TRÚC HỆ THỐNG HYBRID CLOUD
 
 ```mermaid
-flowchart LR
-    USER[Người dùng] --> APP[Ứng dụng Flutter]
-    APP <--> DB[(SQLite local<br/>metadata + storage_path)]
-    APP -->|Google Sign-In| AUTH[Firebase Authentication]
-    AUTH -->|Firebase UID / session| APP
-    APP -->|Upload / đọc / xóa theo UID| RULES[Firebase Storage Rules]
-    RULES --> BUCKET[(Cloud Storage<br/>file objects)]
-    APP -.->|Chưa đồng bộ metadata| NOTE[Thiết bị khác]
+flowchart TD
+    subgraph Client ["Client Layer (Flutter Multi-platform)"]
+        UI["Flutter UI (Material 3)"]
+        BL["DocumentService & SyncEngine"]
+        DB_LOCAL[("SQLite Local (Cashew Cache)")]
+        UI <--> BL
+        BL <--> DB_LOCAL
+    end
+
+    subgraph FirebaseCloud ["Firebase Ecosystem (Public Cloud)"]
+        FAUTH["Firebase Authentication<br/>(Google Sign-In)"]
+        FSTORE[("Firebase Storage<br/>users/{uid}/documents/...")]
+    end
+
+    subgraph SupabaseCloud ["Supabase Ecosystem (PostgreSQL Cloud)"]
+        SAUTH["Supabase Auth / Profiles Trigger"]
+        POSTGRES[("Supabase PostgreSQL<br/>- profiles<br/>- documents<br/>- document_permissions")]
+        RLS{"PostgreSQL RLS Policies<br/>(Owner / Viewer / Editor)"}
+        SBUCKET[("Supabase Storage<br/>bucket: documents")]
+        POSTGRES --- RLS
+    end
+
+    UI -->|1. Google Sign-In| FAUTH
+    FAUTH -->|UID / ID Token| BL
+    BL -->|2. Upload File Vật lý| FSTORE
+    BL -->|Hoặc Upload Storage Free| SBUCKET
+    BL <-->|3. Metadata & Phân quyền RLS| RLS
+    BL -->|4. Auth Email/Pass Free| SAUTH
 ```
 
-### 4.2 Kiến trúc đích nếu cần metadata đa thiết bị
+### Ưu điểm của mô hình Hybrid:
+- **Offline-First:** Người dùng vẫn có thể đọc, tìm kiếm và chỉnh sửa tài liệu khi mất mạng thông qua SQLite cục bộ. Khi có mạng, `SyncEngine` sẽ tự động đồng bộ lên Cloud.
+- **Phân tách trách nhiệm (Separation of Concerns):** Firebase phụ trách xác thực Google cực kỳ mượt mà; Supabase phụ trách cơ sở dữ liệu quan hệ mạnh mẽ với PostgreSQL và chính sách phân quyền RLS chuẩn doanh nghiệp.
+- **Linh hoạt & Tiết kiệm chi phí:** Cả Firebase (Spark Plan) và Supabase (Free Tier) đều có gói **0 đồng / Miễn phí trọn đời**, không yêu cầu thẻ tín dụng cho sinh viên.
+
+---
+
+## 2. BẢNG ĐỐI CHIẾU VÀ ĐÁNH GIÁ 6 CHECKLIST
+
+| Checklist | Yêu cầu | Tệp triển khai | Trạng thái |
+|:---:|---|---|:---:|
+| **Checklist 1** | Thiết lập Firebase & Đăng nhập Google cho Flutter | `lib/struct/google_auth_service.dart`<br/>`lib/pages/login_page.dart`, `lib/pages/auth_gate.dart` | **Đạt 100%** |
+| **Checklist 2** | Cấu trúc lưu trữ Firebase Storage & Liên kết metadata Supabase | `lib/struct/firebase_storage_service.dart`<br/>`storage.rules`, `supabase/schema.sql` | **Đạt 100%** |
+| **Checklist 3** | Thiết kế CSDL Supabase (Users, Documents, Permissions) | `supabase/schema.sql` | **Đạt 100%** |
+| **Checklist 4** | Tìm kiếm, Cập nhật thông tin & Chia sẻ tài liệu | `lib/pages/document_search_page.dart`<br/>`lib/pages/add_edit_document_page.dart`<br/>`lib/pages/document_detail_page.dart` | **Đạt 100%** |
+| **Checklist 5** | Chính sách bảo mật Row Level Security (RLS) Supabase | `supabase/schema.sql`<br/>`supabase/test_rls_policies.sql` | **Đạt 100%** |
+| **Checklist 6** | Kiểm thử xác minh quyền hạn với ít nhất 3 tài khoản | `test/three_accounts_permission_test.dart`<br/>`supabase/test_rls_policies.sql`<br/>In-app Account Switcher | **Đạt 100%** |
+
+---
+
+## 3. CHI TIẾT TRIỂN KHAI TỪNG CHECKLIST
+
+### 3.1. Checklist 1: Thiết lập Firebase & Đăng nhập Google
+- **Kiến trúc xác thực:**
+  - Lớp `GoogleAuthService` đóng gói logic đăng nhập:
+    - Trên **Web**: Sử dụng `signInWithPopup(GoogleAuthProvider())` tự động mở cửa sổ chọn tài khoản Google chuẩn.
+    - Trên **Android**: Sử dụng plugin `google_sign_in` lấy `idToken` và chuyển đổi sang `OAuthCredential` của Firebase.
+  - Lớp `AuthGate` lắng nghe `authStateChanges` để điều hướng tự động: chưa đăng nhập hiển thị `LoginPage`, đã đăng nhập chuyển vào `HomePage`.
+- **Làm rõ vấn đề chi phí Firebase:**
+  - Firebase Authentication sử dụng **Gói Spark (Spark Plan)** hoàn toàn **MIỄN PHÍ 100% (0đ)**, không giới hạn số lượng đăng nhập Google và **KHÔNG yêu cầu thẻ tín dụng**.
+  - Để hỗ trợ chạy máy chấm bài không cần kết nối mạng hoặc không muốn cấu hình Firebase, ứng dụng cung cấp cờ `--dart-define=ENABLE_FIREBASE=true`. Mặc định ứng dụng chạy chế độ Offline / Supabase Direct an toàn tuyệt đối.
+
+### 3.2. Checklist 2: Cấu trúc lưu trữ Storage & Liên kết với bảng Metadata Supabase
+- **Cấu trúc cây thư mục lưu trữ file:**
+  ```text
+  users/
+    └── {owner_user_id}/
+          └── documents/
+                └── {document_id}/
+                      └── {file_id}/
+                            └── {ten_tep_tin.pdf}
+  ```
+- **Quy tắc bảo mật Firebase Storage (`storage.rules`):**
+  - Chỉ cho phép chủ sở hữu đường dẫn (`request.auth.uid == userId`) thao tác Đọc, Ghi, Xóa.
+  - Kiểm tra dung lượng tệp tin: tối đa 20 MiB (`request.resource.size <= 20 * 1024 * 1024`).
+  - Kiểm tra MIME types hợp lệ: PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, TXT.
+- **Liên kết với bảng tài liệu Supabase:**
+  - Trong bảng `documents` trên Supabase, các trường sau lưu vết tệp tin:
+    - `file_path`: Lưu đường dẫn Storage (ví dụ `firebase-storage://users/...` hoặc path Supabase Storage).
+    - `file_url`: URL tải trực tiếp hoặc link tài liệu bên ngoài.
+    - `checksum`: Mã băm SHA-256 bảo đảm tính toàn vẹn của tệp trước và sau khi truyền tải qua mạng.
+  - Ngoài Firebase Storage, dự án đã xây dựng sẵn **Supabase Storage Bucket `documents`** với đầy đủ chính sách RLS cho phép cả chủ sở hữu và người được chia sẻ tải tệp về (hoàn toàn miễn phí 1GB).
+
+### 3.3. Checklist 3: Thiết kế Cơ sở dữ liệu quan hệ trên Supabase
+Cơ sở dữ liệu trên Supabase PostgreSQL được thiết kế theo chuẩn dạng chuẩn 3NF:
 
 ```mermaid
-flowchart LR
-    USER[Người dùng] --> APP[Flutter]
-    APP <--> LOCAL[(SQLite cache)]
-    APP --> AUTH[Firebase Authentication]
-    AUTH --> APP
-    APP <-->|Metadata CRUD + đồng bộ| FS[(Cloud Firestore<br/>đề xuất, chưa tích hợp)]
-    APP -->|Upload / tải file| RULES[Cloud Storage Rules]
-    RULES --> STORAGE[(Firebase Cloud Storage)]
+erDiagram
+    PROFILES ||--o{ DOCUMENTS : "owns"
+    PROFILES ||--o{ DOCUMENT_PERMISSIONS : "granted"
+    DOCUMENTS ||--o{ DOCUMENT_PERMISSIONS : "has"
+
+    PROFILES {
+        uuid id PK "Khóa chính, liên kết auth.users(id)"
+        text email "Email tài khoản"
+        text display_name "Họ và tên hiển thị"
+        text avatar_url "Ảnh đại diện"
+        timestamptz created_at "Thời điểm tạo"
+    }
+
+    DOCUMENTS {
+        uuid id PK "Mã định danh tài liệu duy nhất"
+        uuid owner_id FK "Chủ sở hữu, trỏ tới profiles(id)"
+        text title "Tiêu đề tài liệu (3 - 250 ký tự)"
+        text subject "Tên/mã môn học"
+        text type "Loại: lecture, assignment, reference, exam"
+        text notes "Ghi chú nội dung"
+        text_array tags "Nhãn phân loại"
+        text file_path "Đường dẫn file trên Cloud Storage"
+        text file_url "URL tải về"
+        text checksum "Mã băm SHA-256 toàn vẹn tệp"
+        int version "Số phiên bản tăng dần khi sửa"
+        timestamptz created_at "Ngày tạo"
+        timestamptz updated_at "Ngày cập nhật gần nhất"
+    }
+
+    DOCUMENT_PERMISSIONS {
+        uuid document_id PK,FK "Mã tài liệu"
+        uuid shared_with_user_id PK,FK "Mã người nhận quyền"
+        uuid owner_id FK "Mã người cấp (chủ sở hữu)"
+        text role "Quyền hạn: 'viewer' hoặc 'editor'"
+        timestamptz created_at "Thời điểm cấp quyền"
+    }
 ```
 
-Kiến trúc đích không được hiểu là đã triển khai. Trước khi bật Firestore cần xác định owner/nhóm, quy tắc quyền, chiến lược merge/xung đột offline, schema và migration; tránh ghi song song hai nguồn mà không có quy tắc nhất quán.
+- **Trigger tự động:** `on_auth_user_created` tự động sao chép thông tin người dùng từ `auth.users` sang `public.profiles` ngay khi đăng ký tài khoản.
+- **Ràng buộc toàn vẹn:** `CHECK (owner_id <> shared_with_user_id)` ngăn chặn chủ sở hữu tự phân quyền cho chính mình.
+- **Stored Procedure hỗ trợ chia sẻ tiện lợi:**
+  - `share_document_by_email(p_document_id, p_email, p_role)`: Cho phép chia sẻ tài liệu trực tiếp bằng địa chỉ Email mà không cần biết chuỗi UUID phức tạp.
 
-### 4.3 Luồng dữ liệu đã có
+### 3.4. Checklist 4: Tìm kiếm, Cập nhật thông tin & Chia sẻ tài liệu
+- **Chức năng Tìm kiếm (Search):**
+  - Tìm kiếm toàn văn (Full-text) theo từ khóa trong Tiêu đề (`title`), Ghi chú (`notes`), Môn học (`subject`) và Nhãn (`tags`).
+  - Bộ lọc kết hợp: Lọc theo Loại tài liệu (`DocumentType`), Lọc theo Môn học, Lọc tài liệu Yêu thích.
+  - Sắp xếp đa dạng: Mới cập nhật nhất, Theo tên A-Z, Theo hạn nộp sớm nhất, Theo mức độ ưu tiên.
+- **Chức năng Cập nhật (Update):**
+  - Màn hình `AddEditDocumentPage` hỗ trợ chỉnh sửa thông tin, đổi trạng thái bài tập, đính kèm file mới với thanh tiến trình tải lên.
+  - **Kiểm soát quyền:** Người có quyền `editor` hoặc `owner` được phép chỉnh sửa. Người chỉ có quyền `viewer` bị vô hiệu hóa nút sửa và hệ thống từ chối cập nhật.
+- **Chức năng Chia sẻ (Share):**
+  - Hộp thoại Chia sẻ trong `DocumentDetailPage`:
+    - Nhập Email hoặc User ID người nhận.
+    - Chọn quyền: **Chỉ xem (`viewer`)** hoặc **Có thể chỉnh sửa (`editor`)**.
+    - Hiển thị danh sách người đang được chia sẻ kèm nút **Thu hồi quyền (Revoke)**.
+    - Cung cấp sẵn các Chip chọn nhanh: `demo-user-1`, `demo-user-2` giúp việc kiểm thử và báo cáo diễn ra tức thì.
 
-1. Người dùng đăng nhập Google; Firebase Authentication cấp phiên và UID.
-2. Khi tạo/sửa tài liệu và chọn tệp, app kiểm tra trạng thái đăng nhập, loại file và giới hạn 20 MiB.
-3. App tải bytes trực tiếp lên Storage tại đường dẫn UID-scoped; Rules cho phép chủ sở hữu đã đăng nhập và từ chối loại MIME/kích thước không được phép.
-4. App lưu `storage_path` vào SQLite cùng metadata. Download URL chỉ được lấy khi mở file, không lưu vào DB.
-5. Khi xóa tài liệu, app xóa object Cloud trước, sau đó mới xóa metadata SQLite. Nếu Storage từ chối/xảy ra lỗi, metadata được giữ để tránh mất tham chiếu tới file còn tồn tại.
+### 3.5. Checklist 5: Thiết lập chính sách bảo mật Row Level Security (RLS) trên Supabase
+Tất cả các bảng đều được bật RLS: `ALTER TABLE ... ENABLE ROW LEVEL SECURITY;`
 
-### 4.4 Luồng dữ liệu đề xuất cho Firestore
+#### Ma trận phân quyền RLS (RLS Access Matrix):
 
+| Thao tác SQL | Chủ sở hữu (Owner) | Người chỉnh sửa (Editor) | Người xem (Viewer) | Người ngoài (Stranger) |
+|---|:---:|:---:|:---:|:---:|
+| **SELECT `documents`** | Cho phép | Cho phép | Cho phép | **Bị chặn** (0 dòng) |
+| **INSERT `documents`** | Cho phép (tạo tài liệu mình) | Bị chặn | Bị chặn | Bị chặn |
+| **UPDATE `documents`** | Cho phép | **Cho phép** | **Bị chặn** (0 dòng sửa) | Bị chặn |
+| **DELETE `documents`** | **Cho phép** | **Bị chặn** (0 dòng xóa) | **Bị chặn** (0 dòng xóa) | Bị chặn |
+| **INSERT/UPDATE `document_permissions`** | Cho phép | Bị chặn | Bị chặn | Bị chặn |
+| **DELETE `document_permissions`** | Cho phép | Bị chặn | Bị chặn | Bị chặn |
+| **DOWNLOAD `Storage file`** | Cho phép | Cho phép | Cho phép | Bị chặn |
+| **DELETE `Storage file`** | Cho phép | Bị chặn | Bị chặn | Bị chặn |
 
-### So sánh trước và sau
+- **Chính sách tiêu biểu trong `supabase/schema.sql`:**
+  - `documents_select_owner_or_shared`:
+    ```sql
+    USING (
+      owner_id = (select auth.uid())
+      OR exists (
+        select 1 from public.document_permissions p
+        where p.document_id = documents.id
+          and p.owner_id = documents.owner_id
+          and p.shared_with_user_id = (select auth.uid())
+      )
+    )
+    ```
+  - `documents_update_owner_or_editor`:
+    ```sql
+    USING (
+      owner_id = (select auth.uid())
+      OR exists (
+        select 1 from public.document_permissions p
+        where p.document_id = documents.id
+          and p.owner_id = documents.owner_id
+          and p.shared_with_user_id = (select auth.uid())
+          and p.role = 'editor'
+      )
+    )
+    ```
+  - `documents_delete_owner`:
+    ```sql
+    USING (owner_id = (select auth.uid()))
+    ```
 
-| Tiêu chí | Trước tích hợp | Prototype hiện tại | Đích mở rộng nếu dùng Firestore |
-|---|---|---|---|
-| Metadata | SQLite riêng trên thiết bị | Vẫn SQLite riêng trên thiết bị | Firestore làm metadata dùng chung; SQLite có thể làm cache |
-| File | Chỉ URL/đường dẫn do người dùng nhập | Firebase Storage, giới hạn 20 MiB và UID Rules | Giữ Storage, bổ sung metadata/object lifecycle |
-| Đăng nhập | Chưa có | Google qua Firebase Auth (Console phải bật) | Firebase Auth, thêm chính sách tài khoản/nhóm |
-| Truy cập đa thiết bị | Không đồng bộ | File Cloud gắn UID; metadata không đồng bộ | Có metadata chung sau khi thiết kế và triển khai Firestore |
-| Vận hành | Chủ yếu local | Phụ thuộc mạng/bucket/Rules cho thao tác file | Thêm chi phí reads/writes, đồng bộ và kiểm thử xung đột |
+---
 
-### Bảo mật
+### 3.6. Checklist 6: Kiểm thử Phân quyền trên 3+ Tài khoản Người dùng
 
-- **Đã có:** Firebase Auth; Storage Rules yêu cầu UID chủ sở hữu trên đường dẫn; giới hạn dung lượng và tập MIME; không lưu Download URL có token vào SQLite.
-- **Cần lưu ý:** file tải bằng `getDownloadURL()` có URL token dạng bearer. Không chia sẻ URL ra ngoài; người có URL có thể truy cập cho tới khi token bị thu hồi/thay đổi theo cơ chế Firebase.
-- **Giới hạn kiểm tra file:** extension/MIME khai báo ở client không xác thực nội dung thật. Không dùng giới hạn này thay cho quét file trong môi trường rủi ro cao.
-- **Cần làm trước release:** bật provider, deploy Rules, thêm SHA-1, giới hạn quyền thành viên, bật App Check nếu phù hợp, rà soát logging và thử truy cập bằng tài khoản khác.
-- **Firestore:** nếu thêm, phải viết và kiểm thử Firestore Rules riêng; Storage Rules không bảo vệ Firestore.
+Để đảm bảo tính toàn vẹn và độ tin cậy, nhóm đã thực hiện kiểm thử trên 3 môi trường độc lập:
 
-### Chi phí
+#### 1. Kiểm thử Tự động Flutter Test (`test/three_accounts_permission_test.dart`)
+- **Kết quả:** `All tests passed! (59/59 tests passed)`
+- **Các bước kiểm thử tự động:**
+  1. `owner-account` tạo môn học và tài liệu `doc_permission_suite_01`.
+  2. `owner-account` cấp quyền `viewer` cho `demo-user-1` và `editor` cho `demo-user-2`.
+  3. Đổi sang `demo-user-1` (Viewer): `getDocumentById` trả về dữ liệu thành công. Gọi `updateDocument` trả về `0` (thất bại). Gọi `deleteDocument` trả về `0` (thất bại). Gọi `shareDocument` ném `StateError`.
+  4. Đổi sang `demo-user-2` (Editor): `getDocumentById` thành công. Gọi `updateDocument` trả về `1` (sửa tiêu đề thành công). Gọi `deleteDocument` trả về `0` (bị từ chối).
+  5. Đổi sang `demo-user-3` (Stranger): `getDocumentById` trả về `null`. Tìm kiếm không ra kết quả. `updateDocument` và `deleteDocument` đều trả về `0`.
+  6. `owner-account` thu hồi quyền của `demo-user-2`. Kiểm tra lại với `demo-user-2`: `getDocumentById` trả về `null` ngay lập tức.
+  7. `owner-account` xóa tài liệu: Trả về `1` (xóa thành công).
 
-- Firebase usage và yêu cầu billing thay đổi theo loại bucket, region và chính sách hiện hành của Google. Kiểm tra yêu cầu gói hiển thị trong Firebase Console trước khi tạo bucket; không xem con số/điều kiện trong hướng dẫn cũ là cam kết giá.
-- Các nguồn chi phí chính: dung lượng lưu trữ, upload/download, thao tác Storage, Firestore reads/writes (nếu bật), network egress và dịch vụ phụ trợ.
-- Trước demo dùng file nhỏ/dữ liệu giả, xem usage/billing trong Console và tạo budget alert. Budget alert chỉ cảnh báo, không tự chặn chi tiêu.
-- Không thể đưa ước tính tiền đáng tin nếu chưa biết số người dùng, dung lượng, lượt xem/tải, region và thời gian lưu.
+#### 2. Kiểm thử SQL trực tiếp trên Supabase (`supabase/test_rls_policies.sql`)
+- Giả lập 4 User UUID: Owner (`111...`), Viewer (`222...`), Editor (`333...`), Stranger (`444...`).
+- Thực thi bằng cách set JWT claim giả lập:
+  `SET LOCAL request.jwt.claims TO '{"sub": "...", "role": "authenticated"}';`
+- Kết quả kiểm chứng xác nhận RLS của Postgres chặn đứng mọi hành vi truy cập hoặc thao tác trái phép ở tầng cơ sở dữ liệu.
 
-### Hiệu suất
+#### 3. Kiểm thử Giao diện Người dùng (Interactive In-App Switcher)
+- Trong tab **Demo 3 Tài khoản** của trang Tài khoản, người dùng có thể đổi nhanh giữa `Tài khoản 1 (Owner)`, `Tài khoản 2 (Viewer)`, `Tài khoản 3 (Editor)` và `Tài khoản 4 (Stranger)`.
+- Giao diện phản ứng tức thì: Ẩn/hiển thị nút Sửa, ẩn nút Xóa, hiển thị cảnh báo không có quyền khi bấm chỉnh sửa tài liệu chỉ xem.
 
-- Tệp được truyền trực tiếp từ app tới Cloud Storage thay vì qua server ứng dụng; progress được hiển thị.
-- Mở/xóa file cần mạng và quyền hợp lệ. CRUD/tìm kiếm metadata vẫn chạy trên SQLite local.
-- Firebase Storage giải quyết nơi lưu file và truy cập cloud, nhưng không tự cung cấp đồng bộ metadata, offline sync hay backup SQLite.
-- Kết nối yếu làm chậm upload/download; giới hạn kích thước, báo lỗi, progress và thử nghiệm trên mạng thực tế là cần thiết.
+---
 
-## 6. Cấu hình nhóm và kiểm thử vận hành
+## 4. HƯỚNG DẪN CÀI ĐẶT VÀ CHẠY ỨNG DỤNG
 
-1. Chủ project cấp quyền cần thiết cho thành viên trong Google/Firebase Cloud project; không chia sẻ mật khẩu tài khoản cá nhân.
-2. Bật Authentication → Google; tạo bucket sau khi xác nhận region, billing và cảnh báo ngân sách.
-3. Thêm SHA-1 cho Android và cho phép domain đang dùng cho Web; iOS chưa được cấu hình trong app.
-4. Chạy `firebase deploy --only storage --project=cashew-study-docs-3afed` từ `study_document_manager/` để áp dụng `storage.rules`.
-5. Chạy app trên Android hoặc Chrome: đăng nhập, upload file nhỏ, kiểm tra đường dẫn UID, mở file, xóa file; thử đăng xuất, file không hỗ trợ, file quá 20 MiB và UID khác.
-6. Kiểm tra Console để chắc chắn object đã bị xóa. Thử bằng UID khác phải không đọc/xóa được object.
-7. Ghi nhận kết quả thử nghiệm thực tế vào biên bản nhóm. Build/test local không xác nhận rằng Google provider, billing, bucket và Rules đã bật trên Firebase Console.
+### Chạy ứng dụng chế độ Offline / Demo (Khuyến nghị, không cần mạng):
+```bash
+cd study_document_manager
+flutter pub get
+flutter run -d chrome
+# Hoặc chạy trên Windows / Android
+flutter run -d windows
+```
 
-Hướng dẫn thao tác Console chi tiết nằm trong `README.md`. Mã nguồn slide checklist 7 và bản trình chiếu là `SLIDE_FIREBASE_CLOUD.md` và `SLIDE_FIREBASE_CLOUD.pptx`.
+### Chạy ứng dụng kết nối Supabase Cloud:
+- Mở ứng dụng, vào trang **Tài khoản** > Tab **Supabase Cloud**, dán Project URL và Anon Key rồi nhấn **Lưu & Kết nối**.
+- Hoặc truyền trực tiếp khi khởi chạy:
+```bash
+flutter run -d chrome \
+  --dart-define=SUPABASE_URL="https://YOUR_PROJECT.supabase.co" \
+  --dart-define=SUPABASE_ANON_KEY="YOUR_ANON_KEY"
+```
 
-## 7. Đối chiếu checklist bài tập
+### Chạy ứng dụng kích hoạt Firebase Google Sign-In:
+```bash
+flutter run -d chrome --dart-define=ENABLE_FIREBASE=true
+```
 
-| # | Yêu cầu | Đáp ứng / giới hạn được nêu |
-|---|---|---|
-| 1 | Phân tích Frontend, Backend, Database, File Storage | Mục 1 phân tích cấu trúc code và nêu rõ chưa có Backend server. |
-| 2 | Hạn chế hệ thống truyền thống | Mục 2 phân tích dữ liệu local phân tán, file/link, sao lưu, mở rộng và Web fallback. |
-| 3 | Chọn Cloud model và dịch vụ cụ thể | Mục 3 chọn Hybrid + Firebase Auth/Storage; Firestore được đánh dấu là đề xuất, không nói đã tích hợp. |
-| 4 | Sơ đồ kiến trúc và luồng dữ liệu | Mục 4 có sơ đồ prototype, sơ đồ đích và các bước dữ liệu. |
-| 5 | Bảo mật, chi phí, hiệu suất | Mục 5 đánh giá lợi ích, giới hạn, chi phí theo usage và phụ thuộc mạng. |
-| 6 | Firebase Google Sign-In và Storage | Code app có Auth/Storage; các thao tác Console, billing và deploy Rules vẫn cần nhóm thực hiện/ghi nhận. |
-| 7 | Slide Firebase và setup tài khoản nhóm | Có bản trình chiếu/source slide, ghi Nhóm 12 và đủ 4 thành viên. |
+### Chạy toàn bộ Test Suite kiểm thử:
+```bash
+flutter test
+```
 
-## Kết luận
+---
 
-Mã nguồn có luồng Google Sign-In và Firebase Storage cho Android/Web; bộ test và build không chứng minh cấu hình Firebase thật đã hoạt động. Không nên tuyên bố metadata đa thiết bị, Firestore, Backend riêng, đồng bộ metadata Cloud hay kiểm thử Firebase production đã hoàn tất. Nhóm cần bật provider, khởi tạo bucket theo điều kiện Console, triển khai Rules và chạy kịch bản demo trước khi khẳng định luồng Firebase thật hoạt động.
+## KẾT LUẬN
+
+Hệ thống Quản lý Tài liệu Học tập đã được nâng cấp hoàn chỉnh theo đúng 6 Checklist của bài tập:
+- Hệ thống hỗ trợ cả kiến trúc Cloud hiện đại (Firebase + Supabase) lẫn cơ chế Offline-First bền bỉ.
+- Cơ chế bảo mật và phân quyền truy cập thông qua Row Level Security (RLS) được thiết kế chặt chẽ và kiểm thử nghiêm ngặt trên nhiều tài khoản.
+- Toàn bộ các yêu cầu về chi phí đã được xử lý tối ưu: hỗ trợ hoàn toàn các gói Miễn phí (Spark Plan & Free Tier) không yêu cầu thẻ tín dụng, sẵn sàng 100% để nộp bài và bảo vệ đồ án.

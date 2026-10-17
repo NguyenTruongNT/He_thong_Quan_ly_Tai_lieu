@@ -49,6 +49,8 @@ dependencies:
   file_picker: ^13.1.0
   crypto: ^3.0.3
   connectivity_plus: ^7.3.2
+  supabase_flutter: ^2.18.3
+  shared_preferences: ^2.5.4
 
 
 dev_dependencies:

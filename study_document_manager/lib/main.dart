@@ -11,26 +11,39 @@ import 'database/databaseGlobal.dart';
 import 'firebase_options.dart';
 import 'pages/auth_gate.dart';
 import 'struct/firebase_platform_support.dart';
+import 'struct/supabase_service.dart';
 import 'struct/sync/local_file_store_factory.dart';
 import 'struct/sync/mock_remote_sync_service.dart';
 import 'struct/sync/network_monitor.dart';
+import 'struct/sync/remote_sync_service.dart';
+import 'struct/sync/supabase_remote_sync_service.dart';
 import 'struct/sync/sync_engine.dart';
 import 'struct/sync/sync_global.dart';
+import 'supabase_options.dart';
 
 // =====================================================================
 // [KIẾN TRÚC CASHEW - ĐIỂM KHỞI CHẠY ỨNG DỤNG (ENTRY POINT)]
 // File: lib/main.dart
 // Đề tài: TH1 - Ứng dụng Quản lý Tài liệu Học tập theo Kiến trúc Cashew
 // Mô tả: Khởi tạo cơ sở dữ liệu SQLite, tầng đồng bộ Offline-First
-// (SyncEngine + RemoteSyncService + NetworkMonitor), thiết lập giao diện
-// Theme (Light/Dark) và chạy màn hình chính HomePage.
-
+// (SyncEngine + RemoteSyncService + NetworkMonitor), hỗ trợ cả
+// Firebase Auth/Storage và Supabase PostgreSQL/Storage/Auth.
 // =====================================================================
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (isFirebaseConfiguredPlatform) {
+  // Khởi tạo cấu hình Supabase (nếu có URL & Key)
+  await SupabaseOptions.loadSavedConfig();
+  if (SupabaseOptions.isConfigured) {
+    await SupabaseService.instance.initialize();
+  }
+
+  const enableFirebase = bool.fromEnvironment(
+    'ENABLE_FIREBASE',
+    defaultValue: false,
+  );
+  if (enableFirebase && isFirebaseConfiguredPlatform) {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
@@ -50,8 +63,10 @@ Future<void> main() async {
 
 Future<void> _bootstrapSync() async {
   final fileStore = await createDefaultLocalFileStore();
-  // This in-memory adapter is for local demonstrations and tests, not a cloud backend.
-  final remote = MockRemoteSyncService();
+  // Sử dụng Supabase sync thật khi đã kết nối, hoặc Mock adapter cục bộ
+  final RemoteSyncService remote = SupabaseService.instance.isInitialized
+      ? SupabaseRemoteSyncService()
+      : MockRemoteSyncService();
 
   syncEngine = SyncEngine(
     database: database,
@@ -69,9 +84,13 @@ Future<void> _bootstrapSync() async {
 }
 
 String _resolveOwnerId() {
-  return canUseFirebase
-      ? FirebaseAuth.instance.currentUser?.uid ?? 'local-device'
-      : 'local-device';
+  if (canUseFirebase && FirebaseAuth.instance.currentUser?.uid != null) {
+    return FirebaseAuth.instance.currentUser!.uid;
+  }
+  if (SupabaseService.instance.currentUser?.id != null) {
+    return SupabaseService.instance.currentUser!.id;
+  }
+  return database.activeOwnerId;
 }
 
 class StudyDocumentApp extends StatefulWidget {

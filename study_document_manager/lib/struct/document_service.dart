@@ -304,7 +304,10 @@ class DocumentService {
       syncStatus: isSyncEnabled ? SyncStatus.pendingUpload : doc.syncStatus,
       updatedDate: doc.updatedDate,
     );
-    await database.updateDocument(doc);
+    final updatedCount = await database.updateDocument(doc);
+    if (updatedCount != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
     await _enqueueAndSync(
       doc.id,
       SyncOperation.upsert,
@@ -317,8 +320,9 @@ class DocumentService {
   static Future<void> deleteDocument(String id) async {
     final document = await database.getDocumentById(id);
     if (document == null) return;
-    if (document.isShared) {
-      throw StateError('Không thể xóa tài liệu dùng chung.');
+    if (document.isShared ||
+        await database.getDocumentOwnerId(id) != database.activeOwnerId) {
+      throw StateError('Chỉ chủ sở hữu mới có thể xóa tài liệu.');
     }
 
     final storagePath = document.storagePath;
@@ -390,7 +394,9 @@ class DocumentService {
   /// Bật/Tắt trạng thái yêu thích
   static Future<void> toggleFavorite(DocumentModel doc) async {
     final updated = doc.copyWith(isFavorite: !doc.isFavorite);
-    await database.updateDocument(updated);
+    if (await database.updateDocument(updated) != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
   }
 
   /// Đổi trạng thái xử lý bài tập (Hoàn thành / Chưa làm)
@@ -399,6 +405,8 @@ class DocumentService {
         ? DocumentStatus.inProgress
         : DocumentStatus.completed;
     final updated = doc.copyWith(status: newStatus);
-    await database.updateDocument(updated);
+    if (await database.updateDocument(updated) != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
   }
 }

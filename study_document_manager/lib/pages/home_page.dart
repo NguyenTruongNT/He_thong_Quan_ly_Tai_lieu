@@ -7,6 +7,7 @@ import '../database/databaseGlobal.dart';
 import '../functions.dart';
 import '../struct/document_service.dart';
 import '../struct/models/document_models.dart';
+import '../struct/supabase_service.dart';
 import '../widgets/document_card.dart';
 import '../widgets/framework/page_framework.dart';
 import '../widgets/sync_status_banner.dart';
@@ -72,6 +73,97 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildUserBar(BuildContext context) {
+    final supabaseUser = SupabaseService.instance.currentUser;
+    final activeOwner = database.activeOwnerId;
+    final hasCloud = supabaseUser != null;
+    final displayAccount = hasCloud ? (supabaseUser.email ?? 'Cloud User') : activeOwner;
+    final initial = displayAccount.isNotEmpty ? displayAccount[0].toUpperCase() : 'U';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(70),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () async {
+            await pushRoute(context, const AccountPage());
+            if (mounted) setState(() {});
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 15,
+                  backgroundColor: hasCloud ? AppColors.primary : Colors.grey.shade400,
+                  child: Text(
+                    initial,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              displayAccount,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: hasCloud
+                                  ? Colors.green.withAlpha(30)
+                                  : Colors.orange.withAlpha(30),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              hasCloud ? 'Supabase Cloud' : 'SQLite Offline',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: hasCloud ? Colors.green.shade700 : Colors.orange.shade800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Colors.grey),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageFramework(
@@ -79,8 +171,11 @@ class _HomePageState extends State<HomePage> {
       showBackButton: false,
       actions: [
         IconButton(
-          onPressed: () => pushRoute(context, const AccountPage()),
-          tooltip: 'Tài khoản Firebase',
+          onPressed: () async {
+            await pushRoute(context, const AccountPage());
+            if (mounted) setState(() {});
+          },
+          tooltip: 'Tài khoản / demo chia sẻ',
           icon: const Icon(Icons.account_circle_outlined),
         ),
         IconButton(
@@ -123,6 +218,7 @@ class _HomePageState extends State<HomePage> {
           return ListView(
             padding: const EdgeInsets.only(bottom: 88),
             children: [
+              _buildUserBar(context),
               const SyncStatusBanner(),
               Container(
                 margin: const EdgeInsets.all(16),

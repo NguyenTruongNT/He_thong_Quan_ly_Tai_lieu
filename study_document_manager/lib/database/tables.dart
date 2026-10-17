@@ -212,3 +212,21 @@ class SyncStateTable {
   /// Khóa lưu mốc thời gian đồng bộ gần nhất (dạng millisecondsSinceEpoch).
   static const String keyLastSyncAt = 'last_sync_at';
 }
+
+class DocumentPermissionTable {
+  static const String tableName = 'document_permissions';
+  static const String createTableSql = '''
+    CREATE TABLE IF NOT EXISTS $tableName (
+      document_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      shared_with_user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('viewer', 'editor')),
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (document_id, shared_with_user_id),
+      FOREIGN KEY (document_id) REFERENCES ${DocumentTable.tableName} (${DocumentTable.colId}) ON DELETE CASCADE
+    );
+  ''';
+  static const String createRecipientIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_document_permissions_recipient '
+      'ON $tableName (shared_with_user_id);';
+}
