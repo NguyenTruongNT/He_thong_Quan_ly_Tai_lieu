@@ -217,10 +217,181 @@ class _DocumentListPageState extends State<DocumentListPage> {
     );
   }
 
+  String? _selectedDocumentId;
+
+  Widget _buildFilterSection() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Bộ lọc phân loại nằm ngang
+        FilterChipBar(
+          selectedType: _selectedType,
+          onSelected: (type) {
+            setState(() => _selectedType = type);
+          },
+        ),
+
+        // Lọc theo Môn học và Tài liệu quan trọng
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      isExpanded: true,
+                      value:
+                          (_selectedSubjectId != null &&
+                              _subjectMap.containsKey(_selectedSubjectId))
+                          ? _selectedSubjectId
+                          : null,
+                      hint: const Text(
+                        'Tất cả môn học',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text(
+                            'Tất cả môn học',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        ..._subjectMap.values.map(
+                          (s) => DropdownMenuItem<String?>(
+                            value: s.id,
+                            child: Text(
+                              '[${s.code}] ${s.name}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        setState(() => _selectedSubjectId = val);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: const Text(
+                  'Quan trọng',
+                  style: TextStyle(fontSize: 12),
+                ),
+                selected: _onlyFavorites,
+                avatar: Icon(
+                  _onlyFavorites
+                      ? Icons.star_rounded
+                      : Icons.star_border_rounded,
+                  size: 16,
+                  color: _onlyFavorites
+                      ? AppColors.warning
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                selectedColor: AppColors.warning.withValues(alpha: 0.14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                onSelected: (val) {
+                  setState(() => _onlyFavorites = val);
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.folder_open_rounded,
+            size: 64,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Chưa có tài liệu nào',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Bấm "+ Thêm tài liệu" để bắt đầu lưu trữ',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailPlaceholder() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isDark ? AppColors.surfaceDark : AppColors.surfaceLight,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.3),
+                ),
+              ),
+              child: Icon(
+                Icons.chrome_reader_mode_outlined,
+                size: 56,
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Xem trước tài liệu',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Chọn một tài liệu ở danh sách bên trái để xem chi tiết thông tin, ghi chú và tệp đính kèm.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageFramework(
       title: 'Quản lý tài liệu',
+      maxWidth: 1440,
       actions: [
         IconButton(
           icon: const Icon(Icons.search_rounded),
@@ -243,163 +414,143 @@ class _DocumentListPageState extends State<DocumentListPage> {
         icon: const Icon(Icons.add_rounded),
         label: const Text('Thêm tài liệu'),
       ),
-      body: Column(
-        children: [
-          // Bộ lọc phân loại nằm ngang
-          FilterChipBar(
-            selectedType: _selectedType,
-            onSelected: (type) {
-              setState(() => _selectedType = type);
-            },
-          ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final isMasterDetail = constraints.maxWidth >= 720.0;
+                final filteredList = DocumentService.filterAndSort(
+                  source: _documents,
+                  typeFilter: _selectedType,
+                  subjectIdFilter: _selectedSubjectId,
+                  onlyFavorites: _onlyFavorites,
+                  sortOption: _sortOption,
+                );
 
-          // Lọc theo Môn học và Tài liệu quan trọng
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                      ),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String?>(
-                        isExpanded: true,
-                        value:
-                            (_selectedSubjectId != null &&
-                                _subjectMap.containsKey(_selectedSubjectId))
-                            ? _selectedSubjectId
-                            : null,
-                        hint: const Text(
-                          'Tất cả môn học',
-                          style: TextStyle(fontSize: 12),
+                // Tự động chọn tài liệu đầu tiên nếu chưa chọn trên màn hình Master-Detail
+                if (isMasterDetail && filteredList.isNotEmpty) {
+                  if (_selectedDocumentId == null ||
+                      !filteredList.any((d) => d.id == _selectedDocumentId)) {
+                    _selectedDocumentId = filteredList.first.id;
+                  }
+                } else if (!isMasterDetail) {
+                  _selectedDocumentId = null;
+                }
+
+                final filterSection = _buildFilterSection();
+
+                if (isMasterDetail) {
+                  // Bố cục Master-Detail 2 cột
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Cột trái (Master): Danh sách & bộ lọc
+                      SizedBox(
+                        width: constraints.maxWidth > 1050 ? 420 : 360,
+                        child: Column(
+                          children: [
+                            filterSection,
+                            const SizedBox(height: 6),
+                            Expanded(
+                              child: filteredList.isEmpty
+                                  ? _buildEmptyState()
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.only(
+                                          bottom: 80, top: 4),
+                                      itemCount: filteredList.length,
+                                      itemBuilder: (context, index) {
+                                        final doc = filteredList[index];
+                                        final sub = _subjectMap[doc.subjectId];
+                                        return DocumentCard(
+                                          document: doc,
+                                          subject: sub,
+                                          isSelected:
+                                              doc.id == _selectedDocumentId,
+                                          onTap: () {
+                                            setState(() {
+                                              _selectedDocumentId = doc.id;
+                                            });
+                                          },
+                                          onFavoriteToggle: () =>
+                                              _onFavoriteToggle(doc),
+                                          onStatusToggle: () =>
+                                              _onStatusToggle(doc),
+                                          onEdit: () => _onEdit(doc),
+                                          onDelete: () => _onDelete(doc),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
                         ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text(
-                              'Tất cả môn học',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          ..._subjectMap.values.map(
-                            (s) => DropdownMenuItem<String?>(
-                              value: s.id,
-                              child: Text(
-                                '[${s.code}] ${s.name}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          setState(() => _selectedSubjectId = val);
-                        },
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  label: const Text(
-                    'Quan trọng',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  selected: _onlyFavorites,
-                  avatar: Icon(
-                    _onlyFavorites
-                        ? Icons.star_rounded
-                        : Icons.star_border_rounded,
-                    size: 16,
-                    color: _onlyFavorites
-                        ? AppColors.warning
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  selectedColor: AppColors.warning.withValues(alpha: 0.14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  onSelected: (val) {
-                    setState(() => _onlyFavorites = val);
-                  },
-                ),
-              ],
-            ),
-          ),
 
-          const SizedBox(height: 6),
+                      // Đường phân cách dọc
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .outlineVariant
+                            .withValues(alpha: 0.4),
+                      ),
 
-          // Danh sách phản ứng theo Reactive State của Cashew
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : Builder(
-                    builder: (context) {
-                      final filteredList = DocumentService.filterAndSort(
-                        source: _documents,
-                        typeFilter: _selectedType,
-                        subjectIdFilter: _selectedSubjectId,
-                        onlyFavorites: _onlyFavorites,
-                        sortOption: _sortOption,
-                      );
+                      // Cột phải (Detail): Xem chi tiết tài liệu trực tiếp
+                      Expanded(
+                        child: _selectedDocumentId != null
+                            ? DocumentDetailPage(
+                                key: ValueKey(_selectedDocumentId),
+                                documentId: _selectedDocumentId!,
+                                isEmbedded: true,
+                                onDocumentDeleted: () {
+                                  setState(() {
+                                    _selectedDocumentId = null;
+                                  });
+                                },
+                              )
+                            : _buildDetailPlaceholder(),
+                      ),
+                    ],
+                  );
+                }
 
-                      if (filteredList.isEmpty) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.folder_open_rounded,
-                                size: 64,
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Chưa có tài liệu nào',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Bấm "+ Thêm tài liệu" để bắt đầu lưu trữ',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      return ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 80, top: 4),
-                        itemCount: filteredList.length,
-                        itemBuilder: (context, index) {
-                          final doc = filteredList[index];
-                          final sub = _subjectMap[doc.subjectId];
-                          return DocumentCard(
-                            document: doc,
-                            subject: sub,
-                            onTap: () => pushRoute(
-                              context,
-                              DocumentDetailPage(documentId: doc.id),
+                // Màn hình nhỏ (Mobile): Danh sách 1 cột tiêu chuẩn
+                return Column(
+                  children: [
+                    filterSection,
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: filteredList.isEmpty
+                          ? _buildEmptyState()
+                          : ListView.builder(
+                              padding: const EdgeInsets.only(
+                                  bottom: 80, top: 4),
+                              itemCount: filteredList.length,
+                              itemBuilder: (context, index) {
+                                final doc = filteredList[index];
+                                final sub = _subjectMap[doc.subjectId];
+                                return DocumentCard(
+                                  document: doc,
+                                  subject: sub,
+                                  isSelected: false,
+                                  onTap: () => pushRoute(
+                                    context,
+                                    DocumentDetailPage(documentId: doc.id),
+                                  ),
+                                  onFavoriteToggle: () =>
+                                      _onFavoriteToggle(doc),
+                                  onStatusToggle: () =>
+                                      _onStatusToggle(doc),
+                                  onEdit: () => _onEdit(doc),
+                                  onDelete: () => _onDelete(doc),
+                                );
+                              },
                             ),
-                            onFavoriteToggle: () => _onFavoriteToggle(doc),
-                            onStatusToggle: () => _onStatusToggle(doc),
-                            onEdit: () => _onEdit(doc),
-                            onDelete: () => _onDelete(doc),
-                          );
-                        },
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
   }
 }
