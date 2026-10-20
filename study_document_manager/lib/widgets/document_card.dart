@@ -19,6 +19,7 @@ class DocumentCard extends StatelessWidget {
   final VoidCallback? onStatusToggle;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final bool isSelected;
 
   const DocumentCard({
     super.key,
@@ -29,6 +30,7 @@ class DocumentCard extends StatelessWidget {
     this.onStatusToggle,
     this.onEdit,
     this.onDelete,
+    this.isSelected = false,
   });
 
   @override
@@ -47,7 +49,11 @@ class DocumentCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
       child: Material(
-        color: isDark ? AppColors.cardDark : AppColors.cardLight,
+        color: isSelected
+            ? (isDark
+                ? AppColors.primary.withValues(alpha: 0.20)
+                : AppColors.primary.withValues(alpha: 0.10))
+            : (isDark ? AppColors.cardDark : AppColors.cardLight),
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -57,7 +63,10 @@ class DocumentCard extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               border: Border(
-                left: BorderSide(color: borderColor, width: 4),
+                left: BorderSide(
+                  color: isSelected ? AppColors.primary : borderColor,
+                  width: isSelected ? 5 : 4,
+                ),
               ),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(14),
@@ -67,8 +76,10 @@ class DocumentCard extends StatelessWidget {
             child: Container(
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: isDark ? AppColors.borderDark : AppColors.borderLight,
-                  width: 1,
+                  color: isSelected
+                      ? AppColors.primary
+                      : (isDark ? AppColors.borderDark : AppColors.borderLight),
+                  width: isSelected ? 1.5 : 1,
                 ),
                 borderRadius: BorderRadius.circular(14),
               ),

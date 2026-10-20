@@ -17,9 +17,16 @@ import '../widgets/framework/page_framework.dart';
 import 'add_edit_document_page.dart';
 
 class DocumentDetailPage extends StatefulWidget {
-  const DocumentDetailPage({super.key, required this.documentId});
+  const DocumentDetailPage({
+    super.key,
+    required this.documentId,
+    this.isEmbedded = false,
+    this.onDocumentDeleted,
+  });
 
   final String documentId;
+  final bool isEmbedded;
+  final VoidCallback? onDocumentDeleted;
 
   @override
   State<DocumentDetailPage> createState() => _DocumentDetailPageState();
@@ -33,6 +40,15 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   bool _canEdit = false;
   bool _canManageSharing = false;
   DocumentPermission? _currentPermission;
+
+  @override
+  void didUpdateWidget(DocumentDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.documentId != widget.documentId) {
+      _loading = true;
+      _load();
+    }
+  }
 
   @override
   void initState() {
@@ -110,7 +126,11 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             await DocumentService.deleteDocument(document.id);
             if (mounted) {
               openSnackbar(context, message: 'Đã xóa tài liệu.');
-              Navigator.pop(context, true);
+              if (widget.isEmbedded) {
+                widget.onDocumentDeleted?.call();
+              } else {
+                Navigator.pop(context, true);
+              }
             }
           } catch (error) {
             if (mounted) {
@@ -211,6 +231,7 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
 
     return PageFramework(
       title: 'Chi tiết tài liệu',
+      showBackButton: !widget.isEmbedded,
       actions: [
         if (_canManageSharing)
           IconButton(

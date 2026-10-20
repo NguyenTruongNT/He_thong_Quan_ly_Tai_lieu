@@ -164,10 +164,41 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildResponsiveDocList(List<DocumentModel> docs) {
+    if (docs.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 650) {
+          return Column(
+            children: docs.map(_documentCard).toList(),
+          );
+        }
+        final columns = constraints.maxWidth >= 1050 ? 3 : 2;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: List.generate(columns, (colIndex) {
+              final colDocs = [
+                for (int i = colIndex; i < docs.length; i += columns) docs[i],
+              ];
+              return Expanded(
+                child: Column(
+                  children: colDocs.map(_documentCard).toList(),
+                ),
+              );
+            }),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageFramework(
       title: 'Quản lý tài liệu học tập',
+      maxWidth: 1200,
       showBackButton: false,
       actions: [
         IconButton(
@@ -323,7 +354,7 @@ class _HomePageState extends State<HomePage> {
               ],
               if (pending.isNotEmpty) ...[
                 const _SectionHeader(title: 'Bài tập chưa hoàn thành'),
-                ...pending.take(3).map(_documentCard),
+                _buildResponsiveDocList(pending.take(4).toList()),
               ],
               _SectionHeader(
                 title: 'Tài liệu gần đây',
@@ -335,7 +366,7 @@ class _HomePageState extends State<HomePage> {
                   child: Center(child: Text('Chưa có tài liệu. Thêm tài liệu để bắt đầu.')),
                 )
               else
-                ...recent.take(5).map(_documentCard),
+                _buildResponsiveDocList(recent.take(6).toList()),
             ],
           );
         },

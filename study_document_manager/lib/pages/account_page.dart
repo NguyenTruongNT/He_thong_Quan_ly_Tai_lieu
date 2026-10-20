@@ -14,11 +14,14 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../database/databaseGlobal.dart';
+import '../functions.dart';
 import '../struct/google_auth_service.dart';
 import '../struct/supabase_service.dart';
 import '../struct/sync/sync_global.dart';
 import '../supabase_options.dart';
 import '../widgets/framework/page_framework.dart';
+import '../widgets/recommendation/recommended_section.dart';
+import 'account_profile_page.dart';
 
 class AccountPage extends StatelessWidget {
   const AccountPage({super.key});
@@ -295,79 +298,106 @@ class _SupabaseCloudViewState extends State<_SupabaseCloudView> {
             color: colorScheme.primaryContainer.withAlpha(40),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: colorScheme.primary,
-                    child: Text(
-                      (currentUser.email ?? 'U')[0].toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: colorScheme.onPrimary,
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: colorScheme.primary,
+                        child: Text(
+                          (currentUser.email ?? 'U')[0].toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onPrimary,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Flexible(
-                              child: Text(
-                                currentUser.email ?? 'Tài khoản Cloud',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.green.withAlpha(30),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.check_circle, size: 12, color: Colors.green),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'Cloud Active',
-                                    style: TextStyle(
-                                      fontSize: 10,
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    currentUser.email ?? 'Tài khoản Cloud',
+                                    style: theme.textTheme.titleMedium?.copyWith(
                                       fontWeight: FontWeight.bold,
-                                      color: Colors.green,
                                     ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ],
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withAlpha(30),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check_circle, size: 12, color: Colors.green),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'Cloud Active',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'UID: ${currentUser.id}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.outline,
+                                fontSize: 11,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'UID: ${currentUser.id}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.outline,
-                            fontSize: 11,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: 'Đăng xuất',
+                        icon: const Icon(Icons.logout_rounded, color: Colors.red),
+                        onPressed: _signOutSupabase,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    tooltip: 'Đăng xuất',
-                    icon: const Icon(Icons.logout_rounded, color: Colors.red),
-                    onPressed: _signOutSupabase,
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => UserInterestsDialog(
+                            userId: currentUser.id,
+                            subjects: database.cachedSubjects,
+                            allDocuments: database.cachedDocuments,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+                      label: const Text('Cài đặt sở thích gợi ý tài liệu'),
+                    ),
                   ),
                 ],
               ),
@@ -737,11 +767,29 @@ class _FirebaseAuthViewState extends State<_FirebaseAuthView> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      if (user?.email case final email?) ...[
-                        const SizedBox(height: 4),
-                        Text(email, style: TextStyle(color: colorScheme.outline)),
+                      if (user != null) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () => pushRoute(
+                              context,
+                              AccountProfilePage(
+                                user: user,
+                                onSignOut: _signOutGoogle,
+                              ),
+                            ),
+                            icon: const Icon(Icons.person_outline_rounded),
+                            label: const Text('Xem hồ sơ & Cài đặt sở thích gợi ý'),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                       ],
-                      const SizedBox(height: 22),
                       SizedBox(
                         width: double.infinity,
                         child: user == null
@@ -890,6 +938,25 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
               )
               .toList(),
           onChanged: _isBusy ? null : _switchAccount,
+        ),
+        const SizedBox(height: 12),
+        FilledButton.tonalIcon(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (ctx) => UserInterestsDialog(
+                userId: activeOwnerId,
+                subjects: database.cachedSubjects,
+                allDocuments: database.cachedDocuments,
+              ),
+            );
+          },
+          icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+          label: Text('Cài đặt sở thích gợi ý cho "$activeOwnerId"'),
         ),
         if (_errorMessage != null) ...[
           const SizedBox(height: 14),
