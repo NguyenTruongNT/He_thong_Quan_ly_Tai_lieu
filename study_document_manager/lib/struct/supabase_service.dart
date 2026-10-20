@@ -17,6 +17,7 @@ import 'package:uuid/uuid.dart';
 import '../supabase_options.dart';
 import 'models/document_models.dart';
 import 'models/document_permission.dart';
+import 'models/borrow_request_model.dart';
 
 class SupabaseService {
   SupabaseService._();
@@ -426,7 +427,157 @@ class SupabaseService {
     await client!.storage.from('documents').remove([storagePath]);
   }
 
-  void _ensureInitialized() {
+  
+  // ===================================================================
+  // 6. QUẢN LÝ MƯỢN / TRẢ TÀI LIỆU & THÔNG BÁO REALTIME (TH2)
+  // ===================================================================
+
+  /// Gửi yêu cầu mượn tài liệu (thông qua Stored Procedure an toàn)
+  Future<Map<String, dynamic>> sendBorrowRequest({
+    required String documentId,
+    DateTime? dueDate,
+    String note = '',
+  }) async {
+    _ensureInitialized();
+    final validDocId = _uuidPattern.hasMatch(documentId)
+        ? documentId
+        : const Uuid().v5(Uuid.NAMESPACE_URL, 'doc:$documentId');
+
+    try {
+      final res = await client!.rpc('create_borrow_request', params: {
+        'p_document_id': validDocId,
+        'p_due_date': dueDate?.toUtc().toIso8601String(),
+        'p_note': note,
+      });
+      return Map<String, dynamic>.from(res as Map);
+    } catch (e) {
+      debugPrint('[SupabaseService] sendBorrowRequest RPC error: $e. Fallback insert...');
+      final user = currentUser;
+      if (user == null) throw StateError('Chưa đăng nhập.');
+
+      final doc = await client!
+          .from('documents')
+          .select('owner_id')
+          .eq('id', validDocId)
+          .single();
+      final ownerId = doc['owner_id'] as String;
+
+      final insertRes = await client!.from('borrow_requests').insert({
+        'document_id': validDocId,
+        'borrower_id': user.id,
+        'borrower_email': user.email ?? '',
+        'owner_id': ownerId,
+        'status': 'pending',
+        'due_date': dueDate?.toUtc().toIso8601String(),
+        'note': note,
+      }).select().single();
+      return Map<String, dynamic>.from(insertRes);
+    }
+  }
+
+  /// Chủ sở hữu duyệt hoặc từ chối yêu cầu mượn
+  Future<void> respondBorrowRequest({
+    required String requestId,
+    required String action, // 'approved' | 'rejected'
+  }) async {
+    _ensureInitialized();
+    try {
+      await client!.rpc('respond_borrow_request', params: {
+        'p_request_id': requestId,
+        'p_action': action,
+      });
+    } catch (e) {
+      debugPrint('[SupabaseService] respondBorrowRequest RPC error: $e. Fallback update...');
+      await client!.from('borrow_requests').update({
+        'status': action,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', requestId);
+    }
+  }
+
+  /// Đánh dấu tài liệu đã được hoàn trả
+  Future<void> markDocumentReturned({required String requestId}) async {
+    _ensureInitialized();
+    try {
+      await client!.rpc('mark_document_returned', params: {
+        'p_request_id': requestId,
+      });
+    } catch (e) {
+      debugPrint('[SupabaseService] markDocumentReturned RPC error: $e. Fallback update...');
+      await client!.from('borrow_requests').update({
+        'status': 'returned',
+        'return_date': DateTime.now().toUtc().toIso8601String(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', requestId);
+    }
+  }
+
+  /// Lấy danh sách yêu cầu mượn liên quan tới người dùng hiện tại
+  Future<List<BorrowRequestModel>> getBorrowRequestsForCurrentUser() async {
+    _ensureInitialized();
+    final user = currentUser;
+    if (user == null) return [];
+
+    final rows = await client!
+        .from('borrow_requests')
+        .select('*, documents(title), profiles!borrower_id(display_name)')
+        .or('borrower_id.eq.${user.id},owner_id.eq.${user.id}')
+        .order('created_at', ascending: false);
+
+    return (rows as List)
+        .map((r) => BorrowRequestModel.fromSupabase(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Lắng nghe luồng sự kiện Realtime của bảng borrow_requests
+  RealtimeChannel? subscribeBorrowRequests({
+    required String userId,
+    required void Function(PostgresChangePayload payload) onEvent,
+  }) {
+    if (!isInitialized || client == null) return null;
+
+    final channel = client!.channel('public:borrow_requests_$userId');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'borrow_requests',
+          callback: (payload) {
+            onEvent(payload);
+          },
+        )
+        .subscribe();
+
+    return channel;
+  }
+
+  /// Cập nhật danh sách tag yêu thích trong hồ sơ người dùng
+  Future<void> updateFavoriteTags(List<String> tags) async {
+    _ensureInitialized();
+    final user = currentUser;
+    if (user == null) return;
+    await client!.from('profiles').update({
+      'favorite_tags': tags,
+    }).eq('id', user.id);
+  }
+
+  /// Lấy danh sách tag yêu thích của người dùng
+  Future<List<String>> getFavoriteTags([String? userId]) async {
+    _ensureInitialized();
+    final targetId = userId ?? currentUser?.id;
+    if (targetId == null) return [];
+    final res = await client!
+        .from('profiles')
+        .select('favorite_tags')
+        .eq('id', targetId)
+        .maybeSingle();
+    if (res != null && res['favorite_tags'] is List) {
+      return (res['favorite_tags'] as List).map((e) => e.toString()).toList();
+    }
+    return [];
+  }
+
+void _ensureInitialized() {
     if (!_isInitialized || client == null) {
       throw StateError(
         'Supabase chưa được khởi tạo. Hãy cấu hình Project URL và Anon Key.',

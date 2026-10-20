@@ -4,10 +4,13 @@
 // Mô tả: Định nghĩa cấu trúc các bảng dữ liệu (Schema) và các trường
 // tương ứng với hệ thống SQLite theo kiến trúc lưu trữ của Cashew.
 // Bao gồm các bảng phục vụ cơ chế Offline-First:
-//   - documents   : metadata tài liệu + cột đồng bộ (checksum, version...)
-//   - delete_logs : nhật ký xóa mềm (tombstone) để đồng bộ xóa 2 chiều
-//   - sync_outbox : hàng đợi thao tác cục bộ chờ đẩy lên Cloud
-//   - sync_state  : lưu mốc thời gian đồng bộ gần nhất (lastSyncAt)
+//   - subjects            : danh mục môn học
+//   - documents           : metadata tài liệu + vị trí vật lý + cột đồng bộ
+//   - borrow_requests     : lịch sử & trạng thái yêu cầu mượn/trả tài liệu
+//   - document_permissions: phân quyền viewer/editor
+//   - delete_logs         : nhật ký xóa mềm (tombstone) để đồng bộ xóa 2 chiều
+//   - sync_outbox         : hàng đợi thao tác cục bộ chờ đẩy lên Cloud
+//   - sync_state          : lưu mốc thời gian đồng bộ gần nhất (lastSyncAt)
 // =====================================================================
 
 /// Định nghĩa tên bảng và các cột của bảng Môn học (Subjects)
@@ -23,8 +26,7 @@ class SubjectTable {
   static const String colOwnerId = 'owner_id';
 
   /// Câu lệnh SQL tạo bảng Môn học
-  static const String createTableSql =
-      '''
+  static const String createTableSql = '''
     CREATE TABLE IF NOT EXISTS $tableName (
       $colId TEXT PRIMARY KEY,
       $colName TEXT NOT NULL,
@@ -63,6 +65,12 @@ class DocumentTable {
   static const String colUpdatedDate = 'updated_date';
   static const String colOwnerId = 'owner_id';
 
+  // -------- Các thuộc tính Bản đồ & Vị trí vật lý (schema v6) --------
+  static const String colLatitude = 'latitude'; // double vĩ độ
+  static const String colLongitude = 'longitude'; // double kinh độ
+  static const String colLocationName = 'location_name'; // Vị trí mô tả: "Tủ B3,..."
+  static const String colIsPhysical = 'is_physical'; // 0: File số, 1: Tài liệu giấy/vật lý
+
   // -------- Các cột phục vụ đồng bộ Offline-First (schema v3) --------
   static const String colChecksum = 'checksum'; // MD5/SHA-256 của tệp đính kèm
   static const String colChecksumAlgo = 'checksum_algo'; // 'md5' | 'sha256'
@@ -79,8 +87,7 @@ class DocumentTable {
       'last_synced_at'; // Lần đồng bộ gần nhất với Cloud
 
   /// Câu lệnh SQL tạo bảng Tài liệu
-  static const String createTableSql =
-      '''
+  static const String createTableSql = '''
     CREATE TABLE IF NOT EXISTS $tableName (
       $colId TEXT PRIMARY KEY,
       $colTitle TEXT NOT NULL,
@@ -96,6 +103,11 @@ class DocumentTable {
       $colDeadline INTEGER,
       $colCreatedDate INTEGER NOT NULL,
       $colUpdatedDate INTEGER NOT NULL,
+
+      $colLatitude REAL,
+      $colLongitude REAL,
+      $colLocationName TEXT,
+      $colIsPhysical INTEGER NOT NULL DEFAULT 0,
 
       $colChecksum TEXT,
       $colChecksumAlgo TEXT NOT NULL DEFAULT 'sha256',
@@ -125,6 +137,68 @@ class DocumentTable {
     '$colRemoteUpdatedAt INTEGER',
     '$colLastSyncedAt INTEGER',
   ];
+
+  /// Danh sách cột mở rộng cần thêm khi nâng cấp từ schema v5 -> v6
+  static const List<String> schemaV6Columns = [
+    '$colLatitude REAL',
+    '$colLongitude REAL',
+    '$colLocationName TEXT',
+    '$colIsPhysical INTEGER NOT NULL DEFAULT 0',
+  ];
+}
+
+/// Bảng Mượn / Trả tài liệu (borrow_requests) phục vụ lưu trữ offline cache
+class BorrowRequestTable {
+  static const String tableName = 'borrow_requests';
+
+  static const String colId = 'id';
+  static const String colDocumentId = 'document_id';
+  static const String colBorrowerId = 'borrower_id';
+  static const String colBorrowerEmail = 'borrower_email';
+  static const String colOwnerId = 'owner_id';
+  static const String colStatus = 'status'; // pending | approved | rejected | returned
+  static const String colRequestDate = 'request_date';
+  static const String colDueDate = 'due_date';
+  static const String colReturnDate = 'return_date';
+  static const String colNote = 'note';
+  static const String colCreatedAt = 'created_at';
+  static const String colUpdatedAt = 'updated_at';
+  static const String colDocumentTitle = 'document_title';
+  static const String colBorrowerName = 'borrower_name';
+  static const String colOwnerEmail = 'owner_email';
+
+  static const String createTableSql = '''
+    CREATE TABLE IF NOT EXISTS $tableName (
+      $colId TEXT PRIMARY KEY,
+      $colDocumentId TEXT NOT NULL,
+      $colBorrowerId TEXT NOT NULL,
+      $colBorrowerEmail TEXT NOT NULL DEFAULT '',
+      $colOwnerId TEXT NOT NULL,
+      $colStatus TEXT NOT NULL DEFAULT 'pending',
+      $colRequestDate INTEGER NOT NULL,
+      $colDueDate INTEGER,
+      $colReturnDate INTEGER,
+      $colNote TEXT NOT NULL DEFAULT '',
+      $colCreatedAt INTEGER NOT NULL,
+      $colUpdatedAt INTEGER NOT NULL,
+      $colDocumentTitle TEXT,
+      $colBorrowerName TEXT,
+      $colOwnerEmail TEXT,
+      FOREIGN KEY ($colDocumentId) REFERENCES ${DocumentTable.tableName} (${DocumentTable.colId}) ON DELETE CASCADE
+    );
+  ''';
+
+  static const String createBorrowerIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_borrow_requests_borrower ON $tableName ($colBorrowerId);';
+
+  static const String createOwnerIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_borrow_requests_owner ON $tableName ($colOwnerId);';
+
+  static const String createDocIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_borrow_requests_doc ON $tableName ($colDocumentId);';
+
+  static const String createStatusIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_borrow_requests_status ON $tableName ($colStatus);';
 }
 
 /// Bảng nhật ký xóa (delete_logs): lưu tombstone các tài liệu đã xóa
@@ -145,8 +219,7 @@ class DeleteLogTable {
   static const String colRetryCount = 'retry_count';
   static const String colLastError = 'last_error';
 
-  static const String createTableSql =
-      '''
+  static const String createTableSql = '''
     CREATE TABLE IF NOT EXISTS $tableName (
       $colId TEXT PRIMARY KEY,
       $colDocumentId TEXT NOT NULL,
@@ -168,7 +241,7 @@ class SyncOutboxTable {
   static const String tableName = 'sync_outbox';
 
   static const String colId = 'id';
-  static const String colEntityType = 'entity_type'; // 'document'
+  static const String colEntityType = 'entity_type'; // 'document' | 'borrow_request'
   static const String colEntityId = 'entity_id';
   static const String colOperation = 'operation'; // 'upsert' | 'delete'
   static const String colPayload =
@@ -177,8 +250,7 @@ class SyncOutboxTable {
   static const String colRetryCount = 'retry_count';
   static const String colLastError = 'last_error';
 
-  static const String createTableSql =
-      '''
+  static const String createTableSql = '''
     CREATE TABLE IF NOT EXISTS $tableName (
       $colId TEXT PRIMARY KEY,
       $colEntityType TEXT NOT NULL,
@@ -200,8 +272,7 @@ class SyncStateTable {
   static const String colValue = 'state_value';
   static const String colUpdatedAt = 'updated_at';
 
-  static const String createTableSql =
-      '''
+  static const String createTableSql = '''
     CREATE TABLE IF NOT EXISTS $tableName (
       $colKey TEXT PRIMARY KEY,
       $colValue TEXT,

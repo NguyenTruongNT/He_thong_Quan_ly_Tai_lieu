@@ -10,6 +10,7 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:uuid/uuid.dart';
 
 import '../struct/models/document_models.dart';
+import '../struct/models/borrow_request_model.dart';
 import '../struct/models/document_permission.dart';
 import '../struct/models/sync_models.dart';
 import 'tables.dart';
@@ -38,6 +39,7 @@ class AppDatabase {
   final List<DeleteLogModel> _memoryDeleteLogs = [];
   final List<SyncOutboxEntry> _memoryOutbox = [];
   final Map<String, String> _memorySyncState = {};
+  final List<BorrowRequestModel> _memoryBorrowRequests = [];
 
 
   // Bộ nhớ đệm đồng bộ (In-Memory Cache) theo phong cách Cashew
@@ -57,6 +59,10 @@ class AppDatabase {
       _documentsStreamController.stream;
   Stream<List<SubjectModel>> get watchAllSubjects =>
       _subjectsStreamController.stream;
+  final _borrowRequestsStreamController =
+      StreamController<List<BorrowRequestModel>>.broadcast();
+  Stream<List<BorrowRequestModel>> get watchAllBorrowRequests =>
+      _borrowRequestsStreamController.stream;
 
   String get activeOwnerId => _activeOwnerId;
 
@@ -71,7 +77,7 @@ class AppDatabase {
   }
 
   /// v5 adds document sharing permissions.
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
 
   /// Khởi tạo và mở cơ sở dữ liệu
   Future<void> init({bool isInMemory = false}) async {
@@ -138,6 +144,11 @@ class AppDatabase {
     await db.execute(DocumentTable.createOwnerIndexSql);
     await db.execute(DocumentPermissionTable.createTableSql);
     await db.execute(DocumentPermissionTable.createRecipientIndexSql);
+    await db.execute(BorrowRequestTable.createTableSql);
+    await db.execute(BorrowRequestTable.createBorrowerIndexSql);
+    await db.execute(BorrowRequestTable.createOwnerIndexSql);
+    await db.execute(BorrowRequestTable.createDocIndexSql);
+    await db.execute(BorrowRequestTable.createStatusIndexSql);
     await _seedDefaultData(db);
   }
 
@@ -179,6 +190,18 @@ class AppDatabase {
     if (oldVersion < 5) {
       await db.execute(DocumentPermissionTable.createTableSql);
       await db.execute(DocumentPermissionTable.createRecipientIndexSql);
+    }
+    if (oldVersion < 6) {
+      for (final column in DocumentTable.schemaV6Columns) {
+        try {
+          await db.execute('ALTER TABLE ${DocumentTable.tableName} ADD COLUMN $column');
+        } catch (_) {}
+      }
+      await db.execute(BorrowRequestTable.createTableSql);
+      await db.execute(BorrowRequestTable.createBorrowerIndexSql);
+      await db.execute(BorrowRequestTable.createOwnerIndexSql);
+      await db.execute(BorrowRequestTable.createDocIndexSql);
+      await db.execute(BorrowRequestTable.createStatusIndexSql);
     }
     await db.execute(SubjectTable.createOwnerIndexSql);
     await db.execute(DocumentTable.createOwnerIndexSql);
@@ -346,6 +369,7 @@ class AppDatabase {
     _memoryDeleteLogs.clear();
     _memoryOutbox.clear();
     _memorySyncState.clear();
+    _memoryBorrowRequests.clear();
 
   }
 
@@ -1243,7 +1267,132 @@ class AppDatabase {
   // PHẢN ỨNG DỮ LIỆU THEO PHONG CÁCH CASHEW (REACTIVE NOTIFIERS)
   // ===================================================================
 
-  Future<void> notifyDocumentsChanged() async {
+  
+  // ===================================================================
+  // CÁC THAO TÁC CHO MƯỢN / TRẢ TÀI LIỆU (BORROW REQUESTS DAO)
+  // ===================================================================
+
+  Future<int> insertBorrowRequest(BorrowRequestModel request) async {
+    if (_useMemoryFallback) {
+      _memoryBorrowRequests.removeWhere((r) => r.id == request.id);
+      _memoryBorrowRequests.insert(0, request);
+      await notifyBorrowRequestsChanged();
+      return 1;
+    }
+    final result = await db.insert(
+      BorrowRequestTable.tableName,
+      request.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await notifyBorrowRequestsChanged();
+    return result;
+  }
+
+  Future<int> updateBorrowRequest(BorrowRequestModel request) async {
+    if (_useMemoryFallback) {
+      final index = _memoryBorrowRequests.indexWhere((r) => r.id == request.id);
+      if (index >= 0) {
+        _memoryBorrowRequests[index] = request;
+        await notifyBorrowRequestsChanged();
+        return 1;
+      }
+      return 0;
+    }
+    final result = await db.update(
+      BorrowRequestTable.tableName,
+      request.toMap(),
+      where: '${BorrowRequestTable.colId} = ?',
+      whereArgs: [request.id],
+    );
+    await notifyBorrowRequestsChanged();
+    return result;
+  }
+
+  Future<BorrowRequestModel?> getBorrowRequestById(String id) async {
+    if (_useMemoryFallback) {
+      final index = _memoryBorrowRequests.indexWhere((r) => r.id == id);
+      return index >= 0 ? _memoryBorrowRequests[index] : null;
+    }
+    final rows = await db.query(
+      BorrowRequestTable.tableName,
+      where: '${BorrowRequestTable.colId} = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return BorrowRequestModel.fromMap(rows.first);
+  }
+
+  Future<List<BorrowRequestModel>> getBorrowRequestsForBorrower(String borrowerId) async {
+    if (_useMemoryFallback) {
+      final list = _memoryBorrowRequests
+          .where((r) => r.borrowerId == borrowerId)
+          .toList()
+        ..sort((a, b) => b.updatedDate.compareTo(a.updatedDate));
+      return list;
+    }
+    final rows = await db.query(
+      BorrowRequestTable.tableName,
+      where: '${BorrowRequestTable.colBorrowerId} = ?',
+      whereArgs: [borrowerId],
+      orderBy: '${BorrowRequestTable.colUpdatedAt} DESC',
+    );
+    return rows.map(BorrowRequestModel.fromMap).toList();
+  }
+
+  Future<List<BorrowRequestModel>> getBorrowRequestsForOwner(String ownerId) async {
+    if (_useMemoryFallback) {
+      final list = _memoryBorrowRequests
+          .where((r) => r.ownerId == ownerId)
+          .toList()
+        ..sort((a, b) => b.updatedDate.compareTo(a.updatedDate));
+      return list;
+    }
+    final rows = await db.query(
+      BorrowRequestTable.tableName,
+      where: '${BorrowRequestTable.colOwnerId} = ?',
+      whereArgs: [ownerId],
+      orderBy: '${BorrowRequestTable.colUpdatedAt} DESC',
+    );
+    return rows.map(BorrowRequestModel.fromMap).toList();
+  }
+
+  Future<List<BorrowRequestModel>> getAllBorrowRequests() async {
+    if (_useMemoryFallback) {
+      final list = List<BorrowRequestModel>.from(_memoryBorrowRequests)
+        ..sort((a, b) => b.updatedDate.compareTo(a.updatedDate));
+      return list;
+    }
+    final rows = await db.query(
+      BorrowRequestTable.tableName,
+      orderBy: '${BorrowRequestTable.colUpdatedAt} DESC',
+    );
+    return rows.map(BorrowRequestModel.fromMap).toList();
+  }
+
+  Future<int> deleteBorrowRequest(String id) async {
+    if (_useMemoryFallback) {
+      _memoryBorrowRequests.removeWhere((r) => r.id == id);
+      await notifyBorrowRequestsChanged();
+      return 1;
+    }
+    final result = await db.delete(
+      BorrowRequestTable.tableName,
+      where: '${BorrowRequestTable.colId} = ?',
+      whereArgs: [id],
+    );
+    await notifyBorrowRequestsChanged();
+    return result;
+  }
+
+  Future<void> notifyBorrowRequestsChanged() async {
+    final all = await getAllBorrowRequests();
+    if (!_borrowRequestsStreamController.isClosed) {
+      _borrowRequestsStreamController.add(all);
+    }
+  }
+
+Future<void> notifyDocumentsChanged() async {
     final all = await getAllDocuments();
     _cachedDocuments = all;
     if (!_documentsStreamController.isClosed) {
@@ -1262,6 +1411,7 @@ class AppDatabase {
   Future<void> close() async {
     await _documentsStreamController.close();
     await _subjectsStreamController.close();
+    await _borrowRequestsStreamController.close();
     await _db?.close();
   }
 }

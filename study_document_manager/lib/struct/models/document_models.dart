@@ -275,6 +275,19 @@ class DocumentModel {
   final DateTime updatedDate;
   final bool isShared;
 
+  // -------- Thuộc tính mở rộng TH2: Bản đồ/Vị trí & Thể loại --------
+  /// Tọa độ vĩ độ (vd: 21.0074) để ghim vị trí tài liệu trên bản đồ
+  final double? latitude;
+
+  /// Tọa độ kinh độ (vd: 105.8247) để ghim vị trí tài liệu trên bản đồ
+  final double? longitude;
+
+  /// Tên vị trí lưu trữ vật lý mô tả (vd: "Tủ B3, Thư viện Tạ Quang Bửu")
+  final String? locationName;
+
+  /// true: Sách/giáo trình/đề thi vật lý; false: File số
+  final bool isPhysical;
+
   // -------- Trường phục vụ đồng bộ Offline-First (schema v3) --------
   /// Checksum MD5/SHA-256 của tệp đính kèm (kiểm tra tính toàn vẹn).
   final String? checksum;
@@ -316,6 +329,10 @@ class DocumentModel {
     required this.createdDate,
     required this.updatedDate,
     this.isShared = false,
+    this.latitude,
+    this.longitude,
+    this.locationName,
+    this.isPhysical = false,
     this.checksum,
     this.checksumAlgorithm = 'sha256',
     this.version = 1,
@@ -324,7 +341,6 @@ class DocumentModel {
     this.localPath,
     this.remoteUpdatedAt,
     this.lastSyncedAt,
-
   });
 
   /// Chuyển đổi sang Map để lưu trữ trong SQLite
@@ -344,6 +360,10 @@ class DocumentModel {
       'deadline': deadline?.millisecondsSinceEpoch,
       'created_date': createdDate.millisecondsSinceEpoch,
       'updated_date': updatedDate.millisecondsSinceEpoch,
+      'latitude': latitude,
+      'longitude': longitude,
+      'location_name': locationName,
+      'is_physical': isPhysical ? 1 : 0,
       'checksum': checksum,
       'checksum_algo': checksumAlgorithm,
       'version': version,
@@ -380,7 +400,10 @@ class DocumentModel {
       createdDate: DateTime.fromMillisecondsSinceEpoch(map['created_date'] as int),
       updatedDate: DateTime.fromMillisecondsSinceEpoch(map['updated_date'] as int),
       isShared: map['owner_id'] == '__shared__',
-
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
+      locationName: map['location_name'] as String?,
+      isPhysical: ((map['is_physical'] as int?) ?? 0) == 1,
       checksum: map['checksum'] as String?,
       checksumAlgorithm: map['checksum_algo'] as String? ?? 'sha256',
       version: (map['version'] as int?) ?? 1,
@@ -393,7 +416,6 @@ class DocumentModel {
       lastSyncedAt: map['last_synced_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['last_synced_at'] as int)
           : null,
-
     );
   }
 
@@ -414,6 +436,10 @@ class DocumentModel {
     DateTime? createdDate,
     DateTime? updatedDate,
     bool? isShared,
+    double? latitude,
+    double? longitude,
+    String? locationName,
+    bool? isPhysical,
     String? checksum,
     String? checksumAlgorithm,
     int? version,
@@ -422,7 +448,6 @@ class DocumentModel {
     String? localPath,
     DateTime? remoteUpdatedAt,
     DateTime? lastSyncedAt,
-
   }) {
     return DocumentModel(
       id: id ?? this.id,
@@ -440,6 +465,10 @@ class DocumentModel {
       createdDate: createdDate ?? this.createdDate,
       updatedDate: updatedDate ?? DateTime.now(),
       isShared: isShared ?? this.isShared,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      locationName: locationName ?? this.locationName,
+      isPhysical: isPhysical ?? this.isPhysical,
       checksum: checksum ?? this.checksum,
       checksumAlgorithm: checksumAlgorithm ?? this.checksumAlgorithm,
       version: version ?? this.version,
@@ -448,7 +477,6 @@ class DocumentModel {
       localPath: localPath ?? this.localPath,
       remoteUpdatedAt: remoteUpdatedAt ?? this.remoteUpdatedAt,
       lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
-
     );
   }
 }
