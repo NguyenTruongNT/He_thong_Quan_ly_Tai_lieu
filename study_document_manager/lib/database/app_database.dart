@@ -226,6 +226,29 @@ class AppDatabase {
         DocumentTable.colOwnerId: 'local',
       });
     }
+
+    // Nạp sẵn 1 yêu cầu mượn mẫu: Bob gửi yêu cầu mượn sách của Alice
+    final sampleReq = BorrowRequestModel(
+      id: 'req_sample_bob_to_alice',
+      documentId: 'doc_1',
+      borrowerId: 'bob@tlu.edu.vn',
+      borrowerEmail: 'bob@tlu.edu.vn',
+      ownerId: 'local',
+      status: 'pending',
+      requestDate: now.subtract(const Duration(hours: 4)),
+      dueDate: now.add(const Duration(days: 5)),
+      note: 'Chào bạn Alice, mình muốn mượn cuốn giáo trình Flutter này để ôn thi trong 5 ngày nhé!',
+      createdDate: now.subtract(const Duration(hours: 4)),
+      updatedDate: now.subtract(const Duration(hours: 4)),
+      documentTitle: 'Giáo trình Lập trình Ứng dụng Di động với Flutter',
+      borrowerName: 'Bob Trần (bob@tlu.edu.vn)',
+      ownerEmail: 'alice@tlu.edu.vn',
+    );
+    await db.insert(
+      BorrowRequestTable.tableName,
+      sampleReq.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 
   Future<void> _seedSharedData(Database db) async {
@@ -371,24 +394,57 @@ class AppDatabase {
     _memorySyncState.clear();
     _memoryBorrowRequests.clear();
 
+    // Seed borrow request mẫu: Bob mượn tài liệu doc_1 của Alice (local)
+    _memoryBorrowRequests.addAll([
+      BorrowRequestModel(
+        id: 'req_bob_borrows_doc1',
+        documentId: 'doc_1',
+        borrowerId: 'bob@tlu.edu.vn',
+        borrowerEmail: 'bob@tlu.edu.vn',
+        borrowerName: 'Bob Trần',
+        ownerId: 'local',
+        ownerEmail: 'alice@tlu.edu.vn',
+        documentTitle: 'Slide Bài giảng Flutter: Kiến trúc BLoC & Firebase Integration',
+        status: 'pending',
+        requestDate: now.subtract(const Duration(hours: 3)),
+        dueDate: now.add(const Duration(days: 7)),
+        note: 'Mình cần tài liệu này để chuẩn bị cho buổi báo cáo TH2. '
+            'Cho mình mượn khoảng 1 tuần được không?',
+      ),
+      BorrowRequestModel(
+        id: 'req_charlie_borrows_doc4',
+        documentId: 'doc_4',
+        borrowerId: 'charlie@tlu.edu.vn',
+        borrowerEmail: 'charlie@tlu.edu.vn',
+        borrowerName: 'Charlie Lê',
+        ownerId: 'local',
+        ownerEmail: 'alice@tlu.edu.vn',
+        documentTitle: 'Đề thi Cuối kỳ mẫu: Cấu trúc Dữ liệu & Giải thuật',
+        status: 'approved',
+        requestDate: now.subtract(const Duration(days: 2)),
+        dueDate: now.add(const Duration(days: 5)),
+        note: 'Cần ôn thi cuối kỳ DSA. Cảm ơn bạn Alice!',
+      ),
+    ]);
+
   }
 
   List<SubjectModel> _buildInitialSubjects(DateTime now) {
     return [
+      SubjectModel(
+        id: 'sub_mob',
+        name: 'Phát triển Di động Đa nền tảng',
+        code: 'CSE441',
+        colorValue: 0xFF43A047,
+        iconName: 'phone_android',
+        createdDate: now,
+      ),
       SubjectModel(
         id: 'sub_swe',
         name: 'Kiến trúc & Thiết kế Phần mềm',
         code: 'SWE302',
         colorValue: 0xFF1E88E5,
         iconName: 'architecture',
-        createdDate: now,
-      ),
-      SubjectModel(
-        id: 'sub_mob',
-        name: 'Lập trình Thiết bị Di động',
-        code: 'MOB401',
-        colorValue: 0xFF43A047,
-        iconName: 'phone_android',
         createdDate: now,
       ),
       SubjectModel(
@@ -403,64 +459,112 @@ class AppDatabase {
   }
 
   List<DocumentModel> _buildInitialDocuments(DateTime now) {
+    // Tọa độ khuôn viên ĐH Thủy Lợi (Hà Nội)
+    const double tluLat = 21.00745;
+    const double tluLng = 105.82472;
+
     return [
       DocumentModel(
         id: 'doc_1',
-        title: 'Slide Bài giảng Chương 3: Phân tầng Kiến trúc Cashew',
-        subjectId: 'sub_swe',
+        title: 'Slide Bài giảng Flutter: Kiến trúc BLoC & Firebase Integration',
+        subjectId: 'sub_mob',
         type: DocumentType.lecture,
-        notes: 'Nắm vững phân tách Presentation, Struct, Database Layer và nguyên tắc Reactive Streams.',
-        fileUrl: 'https://docs.cashew-architecture.edu.vn/chapter3-cashew-pattern.pdf',
-        tags: ['Cashew', 'Slide', 'Kiến trúc', 'Layered'],
+        notes:
+            'Trình bày kiến trúc BLoC, tích hợp Firebase Auth + Supabase PostgreSQL trong ứng dụng Flutter đa nền tảng. '
+            'Tài liệu vật lý lưu tại Thư viện ĐH Thủy Lợi, tầng 2, kệ C-12.',
+        fileUrl: 'https://flutter.dev/docs/development/data-and-backend/state-mgmt/bloc',
+        tags: ['Flutter', 'Firebase', 'Slide', 'BLoC', 'Mobile'],
         status: DocumentStatus.completed,
         priority: PriorityLevel.high,
         isFavorite: true,
+        latitude: tluLat,
+        longitude: tluLng,
+        locationName: 'Thư viện ĐH Thủy Lợi - Tầng 2, Kệ C-12',
+        isPhysical: true,
         createdDate: now.subtract(const Duration(days: 3)),
         updatedDate: now.subtract(const Duration(days: 3)),
       ),
       DocumentModel(
         id: 'doc_2',
-        title: 'Bài tập Lớn TH1: Triển khai Ứng dụng Quản lý Tài liệu',
+        title: 'Bài tập Lớn TH2: Hệ thống Quản lý Tài liệu Đa nền tảng',
         subjectId: 'sub_mob',
         type: DocumentType.assignment,
-        notes: 'Yêu cầu đáp ứng đủ 5 checklist: Phân tích, Phân lớp Cashew, CRUD & Search, Unit test, Đóng gói.',
-        fileUrl: 'https://classroom.google.com/c/assignment-th1-cashew',
-        tags: ['TH1', 'Flutter', 'Bài tập lớn', 'Báo cáo'],
+        notes:
+            'Yêu cầu đáp ứng 6 checklist: Kiến trúc Firebase+Supabase, UI đa nền tảng, Tagging+Location, '
+            'Borrow/Share, Recommendation, Kiểm thử & Đóng gói. Hạn nộp cuối kỳ.',
+        fileUrl: 'https://classroom.google.com/c/assignment-th2-multiplatform',
+        tags: ['TH2', 'Flutter', 'Bài tập lớn', 'Firebase', 'Supabase'],
         status: DocumentStatus.inProgress,
         priority: PriorityLevel.high,
         isFavorite: true,
         deadline: now.add(const Duration(days: 5)),
+        latitude: tluLat + 0.0003,
+        longitude: tluLng + 0.0005,
+        locationName: 'Giảng đường T35 - ĐH Thủy Lợi',
+        isPhysical: false,
         createdDate: now.subtract(const Duration(days: 1)),
         updatedDate: now,
       ),
       DocumentModel(
         id: 'doc_3',
-        title: 'Giáo trình Tham khảo: Clean Architecture & SQLite Drift',
+        title: 'Giáo trình: Firebase & Supabase cho Ứng dụng Di động',
         subjectId: 'sub_swe',
         type: DocumentType.reference,
-        notes: 'Sách tham khảo mở rộng về kỹ thuật tối ưu truy vấn và phân tách độc lập giữa các lớp.',
-        fileUrl: 'https://drift.simonbinder.eu/docs/getting-started/',
-        tags: ['Tham khảo', 'Drift', 'SQLite'],
+        notes:
+            'Sách tham khảo chính thức về tích hợp Firebase Authentication/Messaging, '
+            'Supabase PostgreSQL, RLS và Storage trong dự án Flutter thực tế.',
+        fileUrl: 'https://supabase.com/docs/guides/getting-started',
+        tags: ['Firebase', 'Supabase', 'GiaoTrinh', 'Database', 'Tham khảo'],
         status: DocumentStatus.pending,
         priority: PriorityLevel.medium,
         isFavorite: false,
+        latitude: tluLat - 0.0005,
+        longitude: tluLng - 0.0003,
+        locationName: 'Nhà A1 - ĐH Thủy Lợi (Phòng đọc sách)',
+        isPhysical: true,
         createdDate: now.subtract(const Duration(days: 5)),
         updatedDate: now.subtract(const Duration(days: 5)),
       ),
       DocumentModel(
         id: 'doc_4',
-        title: 'Đề cương Ôn thi Cuối kỳ môn Cấu trúc Dữ liệu',
+        title: 'Đề thi Cuối kỳ mẫu: Cấu trúc Dữ liệu & Giải thuật',
         subjectId: 'sub_dsa',
         type: DocumentType.exam,
-        notes: 'Trọng tâm các thuật toán đồ thị Dijkstra, Cây nhị phân tìm kiếm AVL và Quy hoạch động.',
+        notes:
+            'Đề thi mẫu trọng tâm thuật toán đồ thị Dijkstra, Cây AVL, Quy hoạch động. '
+            'Bản in sẵn lưu tại Văn phòng Khoa CNTT.',
         fileUrl: 'assets/docs/dsa_final_exam_review.pdf',
-        tags: ['Đề thi', 'Ôn tập', 'DSA'],
+        tags: ['DeThi', 'Ôn tập', 'DSA', 'Giải thuật'],
         status: DocumentStatus.pending,
         priority: PriorityLevel.high,
         isFavorite: false,
         deadline: now.add(const Duration(days: 12)),
+        latitude: tluLat + 0.0008,
+        longitude: tluLng - 0.0006,
+        locationName: 'Văn phòng Khoa CNTT - ĐH Thủy Lợi',
+        isPhysical: true,
         createdDate: now.subtract(const Duration(days: 2)),
         updatedDate: now.subtract(const Duration(days: 2)),
+      ),
+      DocumentModel(
+        id: 'doc_5',
+        title: 'Slide Chuyên đề: AI & Recommendation System trong Ứng dụng',
+        subjectId: 'sub_swe',
+        type: DocumentType.lecture,
+        notes:
+            'Slide giới thiệu thuật toán gợi ý nội dung (Content-based Filtering, Collaborative Filtering) '
+            'áp dụng trong hệ thống quản lý tài liệu TH2.',
+        fileUrl: 'https://developers.google.com/machine-learning/recommendation',
+        tags: ['AI', 'Recommendation', 'Slide', 'Machine Learning', 'Flutter'],
+        status: DocumentStatus.completed,
+        priority: PriorityLevel.medium,
+        isFavorite: true,
+        latitude: tluLat + 0.0002,
+        longitude: tluLng + 0.0010,
+        locationName: 'Phòng máy tính - Nhà A4, ĐH Thủy Lợi',
+        isPhysical: false,
+        createdDate: now.subtract(const Duration(days: 7)),
+        updatedDate: now.subtract(const Duration(days: 4)),
       ),
     ];
   }

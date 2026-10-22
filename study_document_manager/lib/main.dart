@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'colors.dart';
@@ -41,13 +40,18 @@ Future<void> main() async {
 
   const enableFirebase = bool.fromEnvironment(
     'ENABLE_FIREBASE',
-    defaultValue: false,
+    defaultValue: true,
   );
   if (enableFirebase && isFirebaseConfiguredPlatform) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    firebaseInitialized = true;
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      firebaseInitialized = true;
+    } catch (e) {
+      debugPrint('[Firebase] Chạy chế độ ngoại tuyến (không thể khởi tạo Firebase): $e');
+      firebaseInitialized = false;
+    }
   }
 
   database = AppDatabase();

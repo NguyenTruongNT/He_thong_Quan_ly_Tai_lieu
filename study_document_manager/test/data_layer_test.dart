@@ -193,12 +193,13 @@ void main() {
     );
 
     test('5. Tìm kiếm tài liệu theo từ khóa và bộ lọc (Search)', () async {
-      // Tìm kiếm theo từ khóa có trong tiêu đề
-      final searchByKeyword = await db.searchDocuments(query: 'Cashew');
+      // Tìm kiếm theo từ khóa có trong tiêu đề (Flutter có trong doc_1)
+      final searchByKeyword = await db.searchDocuments(query: 'Flutter');
       expect(
-        searchByKeyword.first.title.contains('Cashew') ||
-            searchByKeyword.first.tags.contains('Cashew') ||
-            searchByKeyword.first.notes.contains('Cashew'),
+        searchByKeyword.isNotEmpty &&
+            (searchByKeyword.first.title.contains('Flutter') ||
+                searchByKeyword.first.tags.contains('Flutter') ||
+                searchByKeyword.first.notes.contains('Flutter')),
         isTrue,
       );
 

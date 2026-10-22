@@ -16,9 +16,11 @@ import 'add_edit_document_page.dart';
 import 'borrow/borrow_management_page.dart';
 import 'document_detail_page.dart';
 import 'document_list_page.dart';
+import 'document_map_page.dart';
 import 'document_search_page.dart';
 import '../struct/borrow_service.dart';
 import '../struct/models/borrow_request_model.dart';
+import '../widgets/recommendation/recommended_section.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -261,6 +263,11 @@ class _HomePageState extends State<HomePage> {
           },
         ),
         IconButton(
+          onPressed: () => pushRoute(context, const DocumentMapPage()),
+          tooltip: 'Bản đồ vị trí tài liệu',
+          icon: const Icon(Icons.map_outlined),
+        ),
+        IconButton(
           onPressed: () async {
             await pushRoute(context, const AccountPage());
             if (mounted) setState(() {});
@@ -359,10 +366,22 @@ class _HomePageState extends State<HomePage> {
                           icon: Icons.handshake_outlined,
                           onTap: () => pushRoute(context, const BorrowManagementPage()),
                         ),
+                        _Metric(
+                          label: 'Bản đồ',
+                          value: 'Xem',
+                          icon: Icons.map_outlined,
+                          onTap: () => pushRoute(context, const DocumentMapPage()),
+                        ),
                       ],
                     ),
                   ],
                 ),
+              ),
+              // Gợi ý tài liệu học tập thông minh (Checklist 05 - Lý Đình Sơn)
+              RecommendedSection(
+                allDocuments: documents,
+                subjects: _subjects,
+                activeUserId: SupabaseService.instance.currentUser?.id ?? database.activeOwnerId,
               ),
               if (_subjects.isNotEmpty) ...[
                 _SectionHeader(

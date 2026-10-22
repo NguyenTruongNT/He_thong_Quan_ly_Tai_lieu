@@ -893,19 +893,69 @@ class _LocalDemoAccountsView extends StatefulWidget {
   State<_LocalDemoAccountsView> createState() => _LocalDemoAccountsViewState();
 }
 
+/// Thông tin hồ sơ sinh viên demo cho kiểm thử Offline
+class _StudentProfile {
+  final String ownerId;
+  final String email;
+  final String name;
+  final String role;
+  final String description;
+  final String emoji;
+  final List<String> interests;
+
+  const _StudentProfile({
+    required this.ownerId,
+    required this.email,
+    required this.name,
+    required this.role,
+    required this.description,
+    required this.emoji,
+    required this.interests,
+  });
+}
+
 class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
-  static const Map<String, String> _accounts = {
-    'local': 'Tài khoản 1 (Owner - Chủ sở hữu)',
-    'demo-user-1': 'Tài khoản 2 (Viewer - Người xem)',
-    'demo-user-2': 'Tài khoản 3 (Editor - Người chỉnh sửa)',
-    'demo-user-3': 'Tài khoản 4 (Stranger - Người lạ)',
-  };
+  static const List<_StudentProfile> _profiles = [
+    _StudentProfile(
+      ownerId: 'local',
+      email: 'alice@tlu.edu.vn',
+      name: 'Alice Nguyễn',
+      role: 'Chủ sở hữu tài liệu',
+      description:
+          'Sinh viên CNTT năm 3 · Có 5 tài liệu học tập, 2 đang được mượn.\n'
+          'Nhận yêu cầu mượn sách từ Bob & Charlie.',
+      emoji: '👩‍🎓',
+      interests: ['Flutter', 'Firebase', 'Mobile', 'AI'],
+    ),
+    _StudentProfile(
+      ownerId: 'bob@tlu.edu.vn',
+      email: 'bob@tlu.edu.vn',
+      name: 'Bob Trần',
+      role: 'Người mượn tài liệu',
+      description:
+          'Sinh viên KTPM năm 2 · Đang chờ duyệt mượn Slide Flutter từ Alice.\n'
+          'Xem danh sách yêu cầu mượn trong tab "Mượn/Chia sẻ".',
+      emoji: '👨‍🎓',
+      interests: ['Supabase', 'Database', 'Flutter', 'Slide'],
+    ),
+    _StudentProfile(
+      ownerId: 'charlie@tlu.edu.vn',
+      email: 'charlie@tlu.edu.vn',
+      name: 'Charlie Lê',
+      role: 'Người mượn & chia sẻ',
+      description:
+          'Sinh viên CNTT năm 4 · Đã được duyệt mượn Đề thi DSA từ Alice.\n'
+          'Chia sẻ tài liệu nghiên cứu AI cho cộng đồng.',
+      emoji: '🧑‍🎓',
+      interests: ['AI', 'Recommendation', 'DSA', 'DeThi', 'Machine Learning'],
+    ),
+  ];
 
   bool _isBusy = false;
   String? _errorMessage;
 
-  Future<void> _switchAccount(String? ownerId) async {
-    if (ownerId == null || ownerId == database.activeOwnerId) return;
+  Future<void> _switchAccount(String ownerId) async {
+    if (ownerId == database.activeOwnerId) return;
     setState(() {
       _isBusy = true;
       _errorMessage = null;
@@ -913,10 +963,22 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
     try {
       await database.setActiveOwner(ownerId);
       syncEngine?.updateOwnerId(ownerId);
+      final profile = _profiles.firstWhere(
+        (p) => p.ownerId == ownerId,
+        orElse: () => _StudentProfile(
+          ownerId: ownerId,
+          email: ownerId,
+          name: ownerId,
+          role: 'Tài khoản tùy chỉnh',
+          description: '',
+          emoji: '👤',
+          interests: [],
+        ),
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Đã chuyển sang tài khoản: ${_accounts[ownerId]}'),
+            content: Text('${profile.emoji} Đã chuyển sang: ${profile.name}'),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
           ),
@@ -934,66 +996,74 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
     final activeOwnerId = database.activeOwnerId;
     final colorScheme = Theme.of(context).colorScheme;
 
-    final accountsMap = Map<String, String>.from(_accounts);
-    if (!accountsMap.containsKey(activeOwnerId)) {
-      accountsMap[activeOwnerId] = 'Tài khoản hiện tại ($activeOwnerId)';
-    }
-
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       children: [
+        // ── Header ──────────────────────────────────────────────
         Card(
           elevation: 0,
-          color: colorScheme.surfaceContainerHighest.withAlpha(90),
+          color: colorScheme.primaryContainer.withAlpha(100),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.all(16),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.offline_bolt_outlined, color: colorScheme.primary),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Kiểm thử phân quyền Offline (SQLite)',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Cơ chế phân quyền truy cập hoạt động trực tiếp trên SQLite máy bạn, '
-                  'phục vụ chấm bài hoặc kiểm tra tính năng khi không có kết nối internet.',
-                  style: TextStyle(height: 1.4),
+                Icon(Icons.offline_bolt_outlined, color: colorScheme.primary, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Kiểm thử phân quyền Offline (SQLite)',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onPrimaryContainer,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Chọn hồ sơ sinh viên để giả lập kịch bản Mượn/Chia sẻ tài liệu '
+                        'mà không cần kết nối internet.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onPrimaryContainer.withAlpha(180),
+                              height: 1.4,
+                            ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 24),
-        DropdownButtonFormField<String>(
-          key: ValueKey(activeOwnerId),
-          initialValue: accountsMap.containsKey(activeOwnerId) ? activeOwnerId : 'local',
-          decoration: InputDecoration(
-            labelText: 'Tài khoản SQLite hiện đang sử dụng',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            prefixIcon: const Icon(Icons.person_pin_circle_outlined),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          ),
-          items: accountsMap.entries
-              .map(
-                (entry) => DropdownMenuItem(
-                  value: entry.key,
-                  child: Text('${entry.value} [${entry.key}]'),
-                ),
-              )
-              .toList(),
-          onChanged: _isBusy ? null : _switchAccount,
+        const SizedBox(height: 20),
+
+        // ── Danh sách hồ sơ sinh viên ───────────────────────────
+        Text(
+          'Hồ sơ sinh viên demo (3 tài khoản):',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
         ),
         const SizedBox(height: 12),
+
+        ...List.generate(_profiles.length, (index) {
+          final profile = _profiles[index];
+          final isActive = activeOwnerId == profile.ownerId;
+          return _buildProfileCard(context, profile, isActive, colorScheme);
+        }),
+
+        if (_errorMessage != null) ...[
+          const SizedBox(height: 12),
+          Text(_errorMessage!, style: TextStyle(color: colorScheme.error)),
+        ],
+
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+
+        // ── Cài đặt sở thích Recommendation ─────────────────────
         FilledButton.tonalIcon(
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1010,57 +1080,187 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
             );
           },
           icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-          label: Text('Cài đặt sở thích gợi ý cho "$activeOwnerId"'),
+          label: Text(
+            'Cài đặt sở thích gợi ý cho tài khoản hiện tại',
+          ),
         ),
-        if (_errorMessage != null) ...[
-          const SizedBox(height: 14),
-          Text(_errorMessage!, style: TextStyle(color: colorScheme.error)),
-        ],
+
         const SizedBox(height: 28),
+
+        // ── Hướng dẫn kịch bản kiểm thử ─────────────────────────
         Text(
-          'Kịch bản kiểm thử mẫu (4 bước):',
+          'Kịch bản kiểm thử Mượn/Chia sẻ tài liệu (4 bước):',
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         const ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(child: Text('1')),
-          title: Text('Đăng nhập "local" (Chủ sở hữu)'),
+          title: Text('👩‍🎓 Đăng nhập Alice (Chủ sở hữu)'),
           subtitle: Text(
-            'Tạo tài liệu mới, bấm nút "Chia sẻ". Cấp quyền demo-user-1 (Chỉ xem) và demo-user-2 (Có thể sửa).',
+            'Xem danh sách tài liệu. Mở tài liệu → bấm nút "Chia sẻ/Mượn". '
+            'Kiểm tra 2 yêu cầu mượn đang chờ duyệt từ Bob & Charlie.',
           ),
         ),
         const ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(child: Text('2')),
-          title: Text('Chuyển sang "demo-user-1" (Viewer)'),
+          title: Text('👨‍🎓 Chuyển sang Bob (Người mượn)'),
           subtitle: Text(
-            'Tài liệu xuất hiện trong danh sách. Thử sửa tiêu đề -> Ứng dụng từ chối! Nút xóa bị ẩn.',
+            'Vào tab "Mượn/Chia sẻ" → xem yêu cầu mượn Slide Flutter đang chờ. '
+            'Thử chỉnh sửa tài liệu của Alice → Ứng dụng từ chối!',
           ),
         ),
         const ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(child: Text('3')),
-          title: Text('Chuyển sang "demo-user-2" (Editor)'),
+          title: Text('🧑‍🎓 Chuyển sang Charlie (Đã được duyệt)'),
           subtitle: Text(
-            'Mở tài liệu và bấm Sửa -> Cập nhật thành công! Thử xóa hoặc phân quyền -> Bị từ chối.',
+            'Đề thi DSA đã xuất hiện trong danh sách vì đã được Alice phê duyệt. '
+            'Xem gợi ý tài liệu AI & Machine Learning từ thuật toán Recommendation.',
           ),
         ),
         const ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(child: Text('4')),
-          title: Text('Chuyển sang "demo-user-3" (Stranger)'),
+          title: Text('👩‍🎓 Quay lại Alice → Phê duyệt yêu cầu của Bob'),
           subtitle: Text(
-            'Tài liệu hoàn toàn không xuất hiện, tìm kiếm không ra kết quả (Bảo vệ dữ liệu tuyệt đối).',
+            'Mở tab "Mượn/Chia sẻ" → duyệt yêu cầu mượn của Bob → '
+            'Chuyển lại Bob để xác nhận tài liệu đã được cấp quyền truy cập.',
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildProfileCard(
+    BuildContext context,
+    _StudentProfile profile,
+    bool isActive,
+    ColorScheme colorScheme,
+  ) {
+    return Card(
+      elevation: isActive ? 3 : 0,
+      margin: const EdgeInsets.only(bottom: 12),
+      color: isActive ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest.withAlpha(80),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: isActive
+            ? BorderSide(color: colorScheme.primary, width: 2)
+            : BorderSide(color: colorScheme.outlineVariant.withAlpha(100)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(profile.emoji, style: const TextStyle(fontSize: 36)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              profile.name,
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: isActive
+                                        ? colorScheme.onPrimaryContainer
+                                        : colorScheme.onSurface,
+                                  ),
+                            ),
+                          ),
+                          if (isActive)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                '✓ Đang dùng',
+                                style: TextStyle(
+                                  color: colorScheme.onPrimary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      Text(
+                        profile.email,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: isActive
+                                  ? colorScheme.onPrimaryContainer.withAlpha(180)
+                                  : colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      Text(
+                        profile.role,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontStyle: FontStyle.italic,
+                              color: isActive ? colorScheme.primary : colorScheme.secondary,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              profile.description,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: profile.interests
+                  .map(
+                    (tag) => Chip(
+                      label: Text('#$tag', style: const TextStyle(fontSize: 11)),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: colorScheme.secondaryContainer.withAlpha(120),
+                    ),
+                  )
+                  .toList(),
+            ),
+            if (!isActive) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonal(
+                  onPressed: _isBusy ? null : () => _switchAccount(profile.ownerId),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: _isBusy
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text('Chuyển sang ${profile.name}'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

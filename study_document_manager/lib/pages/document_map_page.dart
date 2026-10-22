@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../database/databaseGlobal.dart';
+import '../functions.dart';
 import '../mock/mock_documents_with_location.dart';
 import '../models/map_document_item.dart';
 import '../widgets/map/document_map_widget.dart';
+import 'document_detail_page.dart';
 
 class DocumentMapPage extends StatefulWidget {
   const DocumentMapPage({
     super.key,
-    this.documents = mockDocumentsWithLocation,
+    this.documents,
   });
 
-  final List<MapDocumentItem> documents;
+  final List<MapDocumentItem>? documents;
 
   @override
   State<DocumentMapPage> createState() => _DocumentMapPageState();
@@ -19,16 +22,65 @@ class DocumentMapPage extends StatefulWidget {
 class _DocumentMapPageState extends State<DocumentMapPage> {
   MapDocumentItem? _selectedDocument;
   String? _selectedTag;
+  List<MapDocumentItem> _items = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDocuments();
+  }
+
+  void _loadDocuments() {
+    if (widget.documents != null) {
+      _items = List<MapDocumentItem>.from(widget.documents!);
+      return;
+    }
+
+    final subjects = {
+      for (final s in database.cachedSubjects) s.id: s.name,
+    };
+
+    final List<MapDocumentItem> realItems = [];
+    for (final doc in database.cachedDocuments) {
+      if (doc.latitude != null && doc.longitude != null) {
+        realItems.add(
+          MapDocumentItem(
+            id: doc.id,
+            title: doc.title,
+            subjectName: subjects[doc.subjectId] ?? 'Tài liệu học tập',
+            locationName: doc.locationName ?? 'Vị trí vật lý',
+            latitude: doc.latitude!,
+            longitude: doc.longitude!,
+            tags: doc.tags,
+            isBorrowed: false,
+            markerColor: doc.isPhysical ? Colors.deepOrange : Colors.blue,
+          ),
+        );
+      }
+    }
+
+    // Kết hợp các tài liệu thật và mock data mẫu tại khuôn viên ĐH Thủy Lợi
+    final Map<String, MapDocumentItem> merged = {};
+    for (final item in mockDocumentsWithLocation) {
+      merged[item.id] = item;
+    }
+    for (final item in realItems) {
+      merged[item.id] = item;
+    }
+
+    setState(() {
+      _items = merged.values.toList();
+    });
+  }
 
   List<String> get _availableTags {
     final Set<String> tags = <String>{};
 
-    for (final MapDocumentItem document in widget.documents) {
+    for (final MapDocumentItem document in _items) {
       tags.addAll(document.tags);
     }
 
     final List<String> sortedTags = tags.toList()..sort();
-
     return sortedTags;
   }
 
@@ -36,10 +88,10 @@ class _DocumentMapPageState extends State<DocumentMapPage> {
     final String? selectedTag = _selectedTag;
 
     if (selectedTag == null) {
-      return widget.documents;
+      return _items;
     }
 
-    return widget.documents.where((MapDocumentItem document) {
+    return _items.where((MapDocumentItem document) {
       return document.containsTag(selectedTag);
     }).toList();
   }
@@ -64,35 +116,75 @@ class _DocumentMapPageState extends State<DocumentMapPage> {
   }
 
   void _openDocumentDetail(MapDocumentItem document) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final bool docExists =
+        database.cachedDocuments.any((d) => d.id == document.id);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Mở chi tiết tài liệu: ${document.title}'),
-        behavior: SnackBarBehavior.floating,
-        action: SnackBarAction(
-          label: 'Đóng',
-          onPressed: () {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          },
+    if (docExists) {
+      pushRoute(context, DocumentDetailPage(documentId: document.id));
+    } else {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.menu_book_rounded, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  document.title,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Môn học: ${document.subjectName}',
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text('Vị trí lưu trữ: ${document.locationName}'),
+              const SizedBox(height: 4),
+              Text('Tọa độ: ${document.latitude.toStringAsFixed(4)}, ${document.longitude.toStringAsFixed(4)}'),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                children: document.tags
+                    .map((t) => Chip(
+                          label: Text(t, style: const TextStyle(fontSize: 11)),
+                          padding: EdgeInsets.zero,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: document.isBorrowed ? Colors.red.shade50 : Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  document.isBorrowed ? 'Trạng thái: Đang được mượn' : 'Trạng thái: Có sẵn để mượn',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: document.isBorrowed ? Colors.red.shade800 : Colors.green.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Đóng'),
+            ),
+          ],
         ),
-      ),
-    );
-
-    // Khi tích hợp với ứng dụng chính, nhóm trưởng có thể thay
-    // SnackBar phía trên bằng điều hướng tới DocumentDetailPage.
-    //
-    // Ví dụ:
-    //
-    // Navigator.of(context).push(
-    //   MaterialPageRoute<void>(
-    //     builder: (BuildContext context) {
-    //       return DocumentDetailPage(
-    //         documentId: document.id,
-    //       );
-    //     },
-    //   ),
-    // );
+      );
+    }
   }
 
   @override
@@ -104,8 +196,9 @@ class _DocumentMapPageState extends State<DocumentMapPage> {
         title: const Text('Bản đồ vị trí tài liệu'),
         actions: <Widget>[
           IconButton(
-            tooltip: 'Hiển thị tất cả tài liệu',
+            tooltip: 'Làm mới & tải lại tài liệu',
             onPressed: () {
+              _loadDocuments();
               _selectTag(null);
             },
             icon: const Icon(Icons.refresh_rounded),
@@ -261,16 +354,7 @@ class _DocumentSummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                CircleAvatar(
-                  backgroundColor: document.markerColor.withValues(alpha: 0.15),
-                  child: Icon(
-                    Icons.description_rounded,
-                    color: document.markerColor,
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,12 +364,15 @@ class _DocumentSummaryCard extends StatelessWidget {
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
                       Text(
                         document.subjectName,
                         style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colors.onSurfaceVariant,
+                          color: colors.primary,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
@@ -298,73 +385,68 @@ class _DocumentSummaryCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Icon(Icons.place_outlined, color: colors.primary, size: 20),
-                const SizedBox(width: 6),
-                Expanded(child: Text(document.locationName)),
-              ],
-            ),
             const SizedBox(height: 8),
             Row(
               children: <Widget>[
-                const Icon(Icons.my_location_rounded, size: 20),
+                const Icon(Icons.location_on_outlined, size: 18),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '${document.latitude.toStringAsFixed(6)}, '
-                    '${document.longitude.toStringAsFixed(6)}',
+                    document.locationName,
+                    style: theme.textTheme.bodySmall,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
+            Row(
+              children: <Widget>[
+                const Icon(Icons.explore_outlined, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  'Tọa độ: ${document.latitude.toStringAsFixed(4)}, ${document.longitude.toStringAsFixed(4)}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 6,
-              runSpacing: 6,
+              runSpacing: 4,
               children: document.tags.map((String tag) {
                 return Chip(
-                  label: Text(tag),
                   visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  label: Text(tag, style: const TextStyle(fontSize: 11)),
                 );
               }).toList(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: <Widget>[
-                Icon(
-                  document.isBorrowed
-                      ? Icons.warning_amber_rounded
-                      : Icons.check_circle_outline_rounded,
-                  color: document.isBorrowed ? Colors.orange : Colors.green,
-                  size: 20,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    document.isBorrowed
-                        ? 'Tài liệu đang được mượn'
-                        : 'Tài liệu có sẵn tại vị trí',
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  backgroundColor: document.isBorrowed
+                      ? colors.errorContainer
+                      : colors.tertiaryContainer,
+                  label: Text(
+                    document.isBorrowed ? 'Đang mượn' : 'Có sẵn',
                     style: TextStyle(
-                      color: document.isBorrowed ? Colors.orange : Colors.green,
+                      color: document.isBorrowed
+                          ? colors.onErrorContainer
+                          : colors.onTertiaryContainer,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
+                FilledButton.icon(
+                  onPressed: onViewDetail,
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('Xem chi tiết'),
+                ),
               ],
-            ),
-            const SizedBox(height: 14),
-
-            // Nút mở chi tiết tài liệu.
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: onViewDetail,
-                icon: const Icon(Icons.visibility_rounded),
-                label: const Text('Xem chi tiết'),
-              ),
             ),
           ],
         ),

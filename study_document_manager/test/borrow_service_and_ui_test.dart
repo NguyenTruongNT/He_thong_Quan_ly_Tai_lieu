@@ -298,8 +298,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       // Kiểm tra các nút duyệt "Cho mượn" và "Từ chối" trên vai trò Owner
-      expect(find.text('Cho mượn'), findsOneWidget);
-      expect(find.text('Từ chối'), findsOneWidget);
+      expect(find.text('Cho mượn'), findsWidgets);
+      expect(find.text('Từ chối'), findsWidgets);
     });
   });
 }
