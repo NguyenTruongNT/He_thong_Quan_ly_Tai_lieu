@@ -45,6 +45,10 @@ dependencies:
   firebase_core: ^4.15.0
   firebase_auth: ^6.7.0
   google_sign_in: ^7.2.0
+  supabase_flutter: ^2.18.3
+  flutter_map: 7.0.2
+  latlong2: 0.9.1
+  geolocator: ^14.1.2
 
 dev_dependencies:
   flutter_test:
