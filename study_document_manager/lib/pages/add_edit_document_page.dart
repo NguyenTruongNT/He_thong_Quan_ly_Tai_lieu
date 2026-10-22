@@ -11,6 +11,20 @@ import '../struct/formatters.dart';
 import '../struct/google_auth_service.dart';
 import '../struct/models/document_models.dart';
 import '../widgets/framework/page_framework.dart';
+import '../widgets/tags/tag_input_field.dart';
+
+// =====================================================================
+// [KIẾN TRÚC CASHEW - TẦNG GIAO DIỆN: THÊM VÀ SỬA TÀI LIỆU]
+// File: lib/pages/add_edit_document_page.dart
+//
+// Chức năng:
+// - Thêm mới hoặc chỉnh sửa tài liệu.
+// - Chọn hoặc tạo môn học.
+// - Chọn loại tài liệu và thời hạn.
+// - Nhập Tag dưới dạng InputChip.
+// - Chọn mức độ ưu tiên.
+// - Đánh dấu tài liệu quan trọng.
+// =====================================================================
 
 class AddEditDocumentPage extends StatefulWidget {
   const AddEditDocumentPage({
@@ -27,61 +41,98 @@ class AddEditDocumentPage extends StatefulWidget {
 }
 
 class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _subjectController;
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
   late final TextEditingController _titleController;
   late final TextEditingController _notesController;
   late final TextEditingController _fileUrlController;
-  late final TextEditingController _tagsController;
 
-  List<SubjectModel> _subjects = [];
-  String? _subjectId;
-  late DocumentType _type;
-  late PriorityLevel _priority;
+  String _subjectInput = '';
+
+  late DocumentType _selectedType;
+  late PriorityLevel _selectedPriority;
   late bool _isFavorite;
-  DateTime? _deadline;
-  String? _storagePath;
-  PlatformFile? _selectedFile;
-  double? _uploadProgress;
-  bool _loadingSubjects = true;
-  bool _saving = false;
+
+  String? _selectedSubjectId;
+  DateTime? _selectedDeadline;
+
+  List<String> _selectedTags = <String>[];
+  List<SubjectModel> _availableSubjects = <SubjectModel>[];
+
+  bool _isLoadingSubjects = true;
+  bool _isSaving = false;
 
   bool get _isEditing => widget.initialDocument != null;
 
   @override
   void initState() {
     super.initState();
-    final document = widget.initialDocument;
-    _subjectId = document?.subjectId ?? widget.defaultSubjectId;
-    _subjectController = TextEditingController();
+
+    final DocumentModel? document = widget.initialDocument;
+
     _titleController = TextEditingController(text: document?.title ?? '');
+
     _notesController = TextEditingController(text: document?.notes ?? '');
+
     _fileUrlController = TextEditingController(text: document?.fileUrl ?? '');
-    _tagsController = TextEditingController(text: document?.tags.join(', ') ?? '');
-    _type = document?.type ?? DocumentType.lecture;
-    _priority = document?.priority ?? PriorityLevel.medium;
+
+    _selectedTags = List<String>.from(document?.tags ?? <String>[]);
+
+    _selectedType = document?.type ?? DocumentType.lecture;
+
+    _selectedPriority = document?.priority ?? PriorityLevel.medium;
+
     _isFavorite = document?.isFavorite ?? false;
-    _deadline = document?.deadline;
-    _storagePath = document?.storagePath;
+
+    _selectedSubjectId = document?.subjectId ?? widget.defaultSubjectId;
+
+    _selectedDeadline = document?.deadline;
+
     _loadSubjects();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _notesController.dispose();
+    _fileUrlController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSubjects() async {
     try {
-      final subjects = await database.getAllSubjects();
-      if (!mounted) return;
+      final List<SubjectModel> subjects = await database.getAllSubjects();
+
+      if (!mounted) {
+        return;
+      }
+
+      final Iterable<SubjectModel> selectedSubjects = subjects.where(
+        (SubjectModel subject) => subject.id == _selectedSubjectId,
+      );
+
       setState(() {
-        _subjects = subjects;
-        final selected = subjects.where((subject) => subject.id == _subjectId);
-        if (selected.isNotEmpty) {
-          _subjectController.text =
-              '${selected.first.code} - ${selected.first.name}';
+        _availableSubjects = subjects;
+
+        if (selectedSubjects.isNotEmpty) {
+          final SubjectModel selectedSubject = selectedSubjects.first;
+
+          _subjectInput =
+              '${selectedSubject.code} - '
+              '${selectedSubject.name}';
         }
-        _loadingSubjects = false;
+
+        _isLoadingSubjects = false;
       });
     } catch (error) {
-      if (!mounted) return;
-      setState(() => _loadingSubjects = false);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoadingSubjects = false;
+      });
+
       openSnackbar(
         context,
         message: 'Không thể tải danh sách môn học: $error',
@@ -90,51 +141,95 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     }
   }
 
-  (String, String)? _parseSubject(String value) {
-    final separator = RegExp(r'\s+[-–—]\s+').firstMatch(value.trim());
-    if (separator == null) return null;
-    final code = value.trim().substring(0, separator.start).trim();
-    final name = value.trim().substring(separator.end).trim();
-    return code.isEmpty || name.isEmpty ? null : (code, name);
+  (String, String)? _parseSubjectInput(String value) {
+    final String input = value.trim();
+
+    final RegExpMatch? separator = RegExp(r'\s+[-–—]\s+').firstMatch(input);
+
+    if (separator == null) {
+      return null;
+    }
+
+    final String code = input.substring(0, separator.start).trim();
+
+    final String name = input.substring(separator.end).trim();
+
+    if (code.isEmpty || name.isEmpty) {
+      return null;
+    }
+
+    return (code, name);
   }
 
   Future<String?> _resolveSubjectId() async {
-    final selected = _subjects.where((subject) => subject.id == _subjectId);
-    if (selected.isNotEmpty &&
-        _subjectController.text.trim() ==
-            '${selected.first.code} - ${selected.first.name}') {
-      return selected.first.id;
+    final Iterable<SubjectModel> selectedSubjects = _availableSubjects.where(
+      (SubjectModel subject) => subject.id == _selectedSubjectId,
+    );
+
+    if (selectedSubjects.isNotEmpty) {
+      final SubjectModel selectedSubject = selectedSubjects.first;
+
+      final String expectedValue =
+          '${selectedSubject.code} - '
+          '${selectedSubject.name}';
+
+      if (_subjectInput.trim() == expectedValue) {
+        return selectedSubject.id;
+      }
     }
 
-    final parsed = _parseSubject(_subjectController.text);
+    final (String, String)? parsed = _parseSubjectInput(_subjectInput);
+
     if (parsed == null) {
       openSnackbar(
         context,
-        message: 'Nhập môn theo định dạng MÃ - Tên môn.',
+        message:
+            'Nhập môn theo định dạng MÃ - Tên môn, '
+            'hoặc chọn một gợi ý.',
         isError: true,
       );
-      return null;
-    }
-    final duplicate = _subjects.where(
-      (subject) =>
-          subject.code.toLowerCase() == parsed.$1.toLowerCase() ||
-          subject.name.toLowerCase() == parsed.$2.toLowerCase(),
-    );
-    if (duplicate.isNotEmpty) {
-      final existing = duplicate.first;
-      if (existing.code.toLowerCase() == parsed.$1.toLowerCase() &&
-          existing.name.toLowerCase() == parsed.$2.toLowerCase()) {
-        return existing.id;
-      }
-      openSnackbar(
-        context,
-        message: 'Mã hoặc tên môn học đã được dùng cho môn khác.',
-        isError: true,
-      );
+
       return null;
     }
 
-    final subject = SubjectModel(
+    final String code = parsed.$1;
+    final String name = parsed.$2;
+
+    final Iterable<SubjectModel> duplicateCodes = _availableSubjects.where(
+      (SubjectModel subject) =>
+          subject.code.toLowerCase() == code.toLowerCase(),
+    );
+
+    final Iterable<SubjectModel> duplicateNames = _availableSubjects.where(
+      (SubjectModel subject) =>
+          subject.name.toLowerCase() == name.toLowerCase(),
+    );
+
+    if (duplicateCodes.isNotEmpty || duplicateNames.isNotEmpty) {
+      final SubjectModel existingSubject = duplicateCodes.isNotEmpty
+          ? duplicateCodes.first
+          : duplicateNames.first;
+
+      final bool exactMatch =
+          existingSubject.code.toLowerCase() == code.toLowerCase() &&
+          existingSubject.name.toLowerCase() == name.toLowerCase();
+
+      if (exactMatch) {
+        return existingSubject.id;
+      }
+
+      openSnackbar(
+        context,
+        message:
+            'Mã hoặc tên môn học đã được dùng '
+            'cho một môn khác.',
+        isError: true,
+      );
+
+      return null;
+    }
+
+    final SubjectModel newSubject = SubjectModel(
       id: const Uuid().v4(),
       name: parsed.$2,
       code: parsed.$1,
@@ -142,10 +237,20 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
       iconName: 'school',
       createdDate: DateTime.now(),
     );
-    await database.insertSubject(subject);
-    _subjects = [..._subjects, subject];
-    _subjectId = subject.id;
-    return subject.id;
+
+    await database.insertSubject(newSubject);
+
+    if (mounted) {
+      setState(() {
+        _availableSubjects = <SubjectModel>[..._availableSubjects, newSubject];
+
+        _selectedSubjectId = newSubject.id;
+
+        _subjectInput = '${newSubject.code} - ${newSubject.name}';
+      });
+    }
+
+    return newSubject.id;
   }
 
   Future<void> _pickFile() async {
@@ -185,153 +290,161 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
   }
 
   Future<void> _pickDeadline() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
+    final DateTime now = DateTime.now();
+
+    final DateTime initialDate =
+        _selectedDeadline ?? now.add(const Duration(days: 3));
+
+    final DateTime? pickedDate = await showDatePicker(
       context: context,
-      initialDate: _deadline ?? now,
+      initialDate: initialDate.isBefore(now) ? now : initialDate,
       firstDate: now.subtract(const Duration(days: 365)),
       lastDate: now.add(const Duration(days: 365 * 3)),
     );
-    if (picked == null || !mounted) return;
-    final time = await showTimePicker(
+
+    if (pickedDate == null || !mounted) {
+      return;
+    }
+
+    final TimeOfDay? pickedTime = await showTimePicker(
       context: context,
-      initialTime: _deadline == null
-          ? const TimeOfDay(hour: 23, minute: 59)
-          : TimeOfDay.fromDateTime(_deadline!),
+      initialTime: _selectedDeadline != null
+          ? TimeOfDay.fromDateTime(_selectedDeadline!)
+          : const TimeOfDay(hour: 23, minute: 59),
     );
-    if (!mounted) return;
+
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
-      _deadline = DateTime(
-        picked.year,
-        picked.month,
-        picked.day,
-        time?.hour ?? 23,
-        time?.minute ?? 59,
+      _selectedDeadline = DateTime(
+        pickedDate.year,
+        pickedDate.month,
+        pickedDate.day,
+        pickedTime?.hour ?? 23,
+        pickedTime?.minute ?? 59,
       );
     });
   }
 
+  List<String> _normalizeTags() {
+    final Map<String, String> uniqueTags = <String, String>{};
+
+    for (final String rawTag in _selectedTags) {
+      final String trimmedTag = rawTag.trim();
+
+      if (trimmedTag.isEmpty) {
+        continue;
+      }
+
+      final String withoutHash = trimmedTag.startsWith('#')
+          ? trimmedTag.substring(1)
+          : trimmedTag;
+
+      final String normalizedBody = withoutHash
+          .replaceAll(RegExp(r'\s+'), '')
+          .trim();
+
+      if (normalizedBody.isEmpty) {
+        continue;
+      }
+
+      final String normalizedTag = '#$normalizedBody';
+
+      uniqueTags.putIfAbsent(normalizedTag.toLowerCase(), () => normalizedTag);
+    }
+
+    return uniqueTags.values.toList();
+  }
+
   Future<void> _save() async {
-    if (_saving || !_formKey.currentState!.validate()) return;
+    if (_isSaving) {
+      return;
+    }
+
+    final FormState? formState = _formKey.currentState;
+
+    if (formState == null || !formState.validate()) {
+      return;
+    }
+
     setState(() {
-      _saving = true;
-      _uploadProgress = null;
+      _isSaving = true;
     });
 
-    String? uploadedPath;
     try {
-      final subjectId = await _resolveSubjectId();
-      if (subjectId == null || !mounted) return;
-      final documentId = widget.initialDocument?.id ?? const Uuid().v4();
-      final selectedFile = _selectedFile;
-      List<int>? bytes;
-      if (selectedFile != null) {
-        if (!GoogleAuthService.instance.isConfigured ||
-            GoogleAuthService.instance.currentUser == null) {
-          throw StateError(
-            'Đăng nhập Google trên Android hoặc Web trước khi tải tệp lên Firebase.',
-          );
+      final String? subjectId = await _resolveSubjectId();
+
+      if (subjectId == null) {
+        return;
+      }
+
+      final List<String> normalizedTags = _normalizeTags();
+
+      if (isEditing) {
+        final DocumentModel updatedDocument = widget.initialDocument!.copyWith(
+          title: _titleController.text.trim(),
+          subjectId: subjectId,
+          type: _selectedType,
+          notes: _notesController.text.trim(),
+          fileUrl: _fileUrlController.text.trim(),
+          tags: normalizedTags,
+          priority: _selectedPriority,
+          isFavorite: _isFavorite,
+          deadline: _selectedDeadline,
+        );
+
+        await DocumentService.updateDocument(updatedDocument);
+
+        if (!mounted) {
+          return;
         }
-        bytes = await selectedFile.readAsBytes();
-        uploadedPath = await FirebaseStorageService.instance.uploadDocument(
-          file: selectedFile,
-          documentId: documentId,
-          onProgress: (progress) {
-            if (mounted) setState(() => _uploadProgress = progress);
-          },
+
+        openSnackbar(context, message: 'Đã cập nhật tài liệu thành công!');
+
+        Navigator.pop(context, true);
+      } else {
+        final DateTime now = DateTime.now();
+
+        final DocumentModel newDocument = DocumentModel(
+          id: const Uuid().v4(),
+          title: _titleController.text.trim(),
+          subjectId: subjectId,
+          type: _selectedType,
+          notes: _notesController.text.trim(),
+          fileUrl: _fileUrlController.text.trim(),
+          tags: normalizedTags,
+          status: DocumentStatus.pending,
+          priority: _selectedPriority,
+          isFavorite: _isFavorite,
+          deadline: _selectedDeadline,
+          createdDate: now,
+          updatedDate: now,
         );
         _storagePath = uploadedPath;
       }
 
-      final now = DateTime.now();
-      final document = widget.initialDocument == null
-          ? DocumentModel(
-              id: documentId,
-              title: _titleController.text.trim(),
-              subjectId: subjectId,
-              type: _type,
-              notes: _notesController.text.trim(),
-              fileUrl: _fileUrlController.text.trim(),
-              storagePath: _storagePath,
-              tags: _tagsController.text
-                  .split(',')
-                  .map((tag) => tag.trim())
-                  .where((tag) => tag.isNotEmpty)
-                  .toList(),
-              priority: _priority,
-              isFavorite: _isFavorite,
-              deadline: _deadline,
-              createdDate: now,
-              updatedDate: now,
-            )
-          : widget.initialDocument!.copyWith(
-              title: _titleController.text.trim(),
-              subjectId: subjectId,
-              type: _type,
-              notes: _notesController.text.trim(),
-              fileUrl: _fileUrlController.text.trim(),
-              storagePath: _storagePath,
-              tags: _tagsController.text
-                  .split(',')
-                  .map((tag) => tag.trim())
-                  .where((tag) => tag.isNotEmpty)
-                  .toList(),
-              priority: _priority,
-              isFavorite: _isFavorite,
-              deadline: _deadline,
-              updatedDate: now,
-            );
-      try {
-        if (_isEditing) {
-          await DocumentService.updateDocument(
-            document,
-            fileBytes: bytes,
-            fileName: selectedFile?.name,
-            fileAlreadyUploaded: uploadedPath != null,
-          );
-        } else {
-          await DocumentService.saveDocument(
-            document,
-            fileBytes: bytes,
-            fileName: selectedFile?.name,
-            fileAlreadyUploaded: uploadedPath != null,
-          );
-        }
-      } catch (error) {
-        if (uploadedPath != null) {
-          try {
-            await FirebaseStorageService.instance.delete(uploadedPath);
-          } catch (cleanupError) {
-            throw StateError(
-              'Không lưu được metadata ($error); cũng không thể xóa tệp vừa tải lên ($cleanupError).',
-            );
-          }
-        }
-        rethrow;
-      }
+        await DocumentService.saveDocument(newDocument);
 
-      final oldPath = widget.initialDocument?.storagePath;
-      if (oldPath != null && oldPath != _storagePath && uploadedPath != null) {
-        await FirebaseStorageService.instance.delete(oldPath);
-      }
-      if (mounted) {
-        openSnackbar(
-          context,
-          message: _isEditing
-              ? 'Đã cập nhật tài liệu.'
-              : 'Đã thêm tài liệu.',
-        );
+        if (!mounted) {
+          return;
+        }
+
+        openSnackbar(context, message: 'Đã thêm tài liệu học tập mới!');
+
         Navigator.pop(context, true);
       }
     } catch (error) {
-      if (mounted) {
-        openSnackbar(context, message: 'Không thể lưu tài liệu: $error', isError: true);
+      if (!mounted) {
+        return;
       }
+
+      openSnackbar(context, message: 'Lỗi: $error', isError: true);
     } finally {
       if (mounted) {
         setState(() {
-          _saving = false;
-          _uploadProgress = null;
+          _isSaving = false;
         });
       }
     }
@@ -349,104 +462,388 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+
     return PageFramework(
-      title: _isEditing ? 'Chỉnh sửa tài liệu' : 'Thêm tài liệu',
-      actions: [
+      title: isEditing ? 'Chỉnh sửa tài liệu' : 'Thêm tài liệu mới',
+      actions: <Widget>[
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.primary,
+              foregroundColor: colors.onPrimary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: _isSaving ? null : _save,
+            icon: _isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2.2),
                   )
-                : const Icon(Icons.check_rounded),
-            label: Text(_isEditing ? 'Lưu' : 'Tạo mới'),
+                : const Icon(Icons.check_rounded, size: 18),
+            label: Text(
+              _isSaving
+                  ? 'Đang lưu...'
+                  : isEditing
+                  ? 'Lưu'
+                  : 'Tạo mới',
+            ),
           ),
         ),
       ],
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Autocomplete<SubjectModel>(
-              displayStringForOption: (subject) =>
-                  '${subject.code} - ${subject.name}',
-              initialValue: TextEditingValue(text: _subjectController.text),
-              optionsBuilder: (value) {
-                final query = value.text.trim().toLowerCase();
-                return _subjects.where(
-                  (subject) =>
-                      query.isEmpty ||
-                      subject.code.toLowerCase().contains(query) ||
-                      subject.name.toLowerCase().contains(query),
-                );
-              },
-              onSelected: (subject) {
-                _subjectId = subject.id;
-                _subjectController.text =
-                    '${subject.code} - ${subject.name}';
-              },
-              fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
-                _subjectController.value = controller.value;
-                return TextFormField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  onChanged: (value) {
-                    _subjectController.text = value;
-                    final selected = _subjects.where(
-                      (subject) =>
-                          subject.id == _subjectId &&
-                          value == '${subject.code} - ${subject.name}',
-                    );
-                    if (selected.isEmpty) _subjectId = null;
-                  },
-                  onFieldSubmitted: (_) => onSubmitted(),
-                  validator: (value) =>
-                      _parseSubject(value ?? '') == null &&
-                          !_subjects.any(
-                            (subject) =>
-                                subject.id == _subjectId &&
-                                '${subject.code} - ${subject.name}' ==
-                                    value?.trim(),
-                          )
-                      ? 'Nhập theo định dạng MÃ - Tên môn.'
-                      : null,
-                  decoration: InputDecoration(
-                    labelText: 'Môn học / Học phần *',
-                    hintText: _loadingSubjects
-                        ? 'Đang tải môn học...'
-                        : 'Ví dụ: SWE302 - Kiến trúc phần mềm',
-                    prefixIcon: const Icon(Icons.school_outlined),
+      body: _isLoadingSubjects
+          ? const Center(child: CircularProgressIndicator())
+          : Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: <Widget>[
+                  Text(
+                    'Môn học / Học phần *',
+                    style: theme.textTheme.labelLarge,
                   ),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<DocumentType>(
-              initialValue: _type,
-              decoration: const InputDecoration(labelText: 'Loại tài liệu'),
-              items: DocumentType.values
-                  .map(
-                    (type) => DropdownMenuItem(
-                      value: type,
-                      child: Text(type.displayName),
+                  const SizedBox(height: 8),
+
+                  Autocomplete<SubjectModel>(
+                    displayStringForOption: (SubjectModel subject) {
+                      return '${subject.code} - '
+                          '${subject.name}';
+                    },
+                    initialValue: TextEditingValue(text: _subjectInput),
+                    optionsBuilder: (TextEditingValue value) {
+                      final String query = value.text.trim().toLowerCase();
+
+                      if (query.isEmpty) {
+                        return const Iterable<SubjectModel>.empty();
+                      }
+
+                      return _availableSubjects.where((SubjectModel subject) {
+                        return subject.code.toLowerCase().contains(query) ||
+                            subject.name.toLowerCase().contains(query);
+                      });
+                    },
+                    onSelected: (SubjectModel subject) {
+                      _subjectInput =
+                          '${subject.code} - '
+                          '${subject.name}';
+
+                      setState(() {
+                        _selectedSubjectId = subject.id;
+                      });
+                    },
+                    fieldViewBuilder:
+                        (
+                          BuildContext context,
+                          TextEditingController controller,
+                          FocusNode focusNode,
+                          VoidCallback onFieldSubmitted,
+                        ) {
+                          return TextFormField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (String value) {
+                              _subjectInput = value;
+
+                              final Iterable<SubjectModel> selectedSubjects =
+                                  _availableSubjects.where((
+                                    SubjectModel subject,
+                                  ) {
+                                    return subject.id == _selectedSubjectId &&
+                                        value.trim() ==
+                                            '${subject.code} - '
+                                                '${subject.name}';
+                                  });
+
+                              if (selectedSubjects.isEmpty) {
+                                _selectedSubjectId = null;
+                              }
+                            },
+                            onFieldSubmitted: (_) {
+                              onFieldSubmitted();
+                            },
+                            validator: (String? value) {
+                              final Iterable<SubjectModel> selectedSubjects =
+                                  _availableSubjects.where((
+                                    SubjectModel subject,
+                                  ) {
+                                    return subject.id == _selectedSubjectId &&
+                                        value?.trim() ==
+                                            '${subject.code} - '
+                                                '${subject.name}';
+                                  });
+
+                              if (selectedSubjects.isNotEmpty ||
+                                  _parseSubjectInput(value ?? '') != null) {
+                                return null;
+                              }
+
+                              return 'Nhập theo định dạng '
+                                  'MÃ - Tên môn.';
+                            },
+                            decoration: const InputDecoration(
+                              hintText:
+                                  'Ví dụ: SWE302 - '
+                                  'Kiến trúc phần mềm',
+                              prefixIcon: Icon(Icons.school_outlined),
+                              suffixIcon: Icon(Icons.expand_more_rounded),
+                            ),
+                          );
+                        },
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, top: 6, bottom: 12),
+                    child: Text(
+                      'Chọn gợi ý có sẵn hoặc nhập '
+                      'MÃ - Tên môn để tạo môn mới.',
+                      style: theme.textTheme.bodySmall,
                     ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _type = value);
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _titleController,
-              validator: DocumentService.validateTitle,
-              decoration: const InputDecoration(
-                labelText: 'Tiêu đề tài liệu *',
-                prefixIcon: Icon(Icons.title_rounded),
+                  ),
+
+                  const Text(
+                    'Phân loại tài liệu *',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: DocumentType.values.map((DocumentType type) {
+                      final bool selected = _selectedType == type;
+
+                      return ChoiceChip(
+                        label: Text(type.displayName),
+                        selected: selected,
+                        avatar: Icon(
+                          type.icon,
+                          size: 16,
+                          color: selected
+                              ? type.color
+                              : colors.onSurfaceVariant,
+                        ),
+                        selectedColor: type.color.withValues(alpha: 0.2),
+                        labelStyle: TextStyle(
+                          color: selected ? type.color : null,
+                          fontWeight: selected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        side: BorderSide(
+                          color: selected ? type.color : colors.outlineVariant,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        onSelected: (bool value) {
+                          if (!value) {
+                            return;
+                          }
+
+                          setState(() {
+                            _selectedType = type;
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  CustomTextField(
+                    controller: _titleController,
+                    label: 'Tiêu đề tài liệu *',
+                    hint:
+                        'Ví dụ: Bài tập lớn Kiến trúc '
+                        'Phần mềm Tuần 4',
+                    prefixIcon: Icons.title_rounded,
+                    validator: DocumentService.validateTitle,
+                  ),
+
+                  CustomTextField(
+                    controller: _fileUrlController,
+                    label:
+                        'Đường dẫn File / '
+                        'Liên kết học tập',
+                    hint:
+                        'Ví dụ: https://drive.google.com/... '
+                        'hoặc tài liệu.pdf',
+                    prefixIcon: Icons.link_rounded,
+                    validator: DocumentService.validateUrl,
+                  ),
+
+                  if (_selectedType == DocumentType.assignment ||
+                      _selectedType == DocumentType.exam) ...<Widget>[
+                    const Text(
+                      'Thời hạn hoàn thành '
+                      '(Deadline)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    InkWell(
+                      onTap: _pickDeadline,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: colors.outlineVariant),
+                        ),
+                        child: Row(
+                          children: <Widget>[
+                            Icon(
+                              Icons.event_rounded,
+                              size: 20,
+                              color: colors.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _selectedDeadline != null
+                                    ? DocumentFormatters.formatDateTime(
+                                        _selectedDeadline,
+                                      )
+                                    : 'Chưa đặt hạn nộp '
+                                          '(Bấm để chọn)',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: _selectedDeadline != null
+                                      ? colors.onSurface
+                                      : colors.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            if (_selectedDeadline != null)
+                              IconButton(
+                                tooltip: 'Xóa thời hạn',
+                                icon: const Icon(Icons.clear_rounded, size: 18),
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedDeadline = null;
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Tag Input dạng Chip.
+                  TagInputField(
+                    key: ValueKey<String>(
+                      'tag-input-'
+                      '${widget.initialDocument?.id ?? 'new'}',
+                    ),
+                    initialTags: _selectedTags,
+                    suggestions: const <String>[
+                      '#GiaoTrinh',
+                      '#DeThi',
+                      '#Slide',
+                      '#ThucHanh',
+                      '#Flutter',
+                      '#Firebase',
+                      '#AI',
+                      '#Mobile',
+                    ],
+                    maxTags: 10,
+                    onChanged: (List<String> tags) {
+                      _selectedTags = List<String>.from(tags);
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  const Text(
+                    'Mức độ ưu tiên',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+
+                  SegmentedButton<PriorityLevel>(
+                    segments: const <ButtonSegment<PriorityLevel>>[
+                      ButtonSegment<PriorityLevel>(
+                        value: PriorityLevel.low,
+                        label: Text('Thấp'),
+                      ),
+                      ButtonSegment<PriorityLevel>(
+                        value: PriorityLevel.medium,
+                        label: Text('Bình thường'),
+                      ),
+                      ButtonSegment<PriorityLevel>(
+                        value: PriorityLevel.high,
+                        label: Text('Cao / Gấp'),
+                      ),
+                    ],
+                    selected: <PriorityLevel>{_selectedPriority},
+                    onSelectionChanged: (Set<PriorityLevel> values) {
+                      setState(() {
+                        _selectedPriority = values.first;
+                      });
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  CustomTextField(
+                    controller: _notesController,
+                    label: 'Ghi chú & Tóm tắt nội dung',
+                    hint:
+                        'Ghi chú nội dung trọng tâm '
+                        'cần ghi nhớ...',
+                    prefixIcon: Icons.notes_rounded,
+                    maxLines: 4,
+                  ),
+
+                  SwitchListTile(
+                    title: const Text(
+                      'Đánh dấu tài liệu quan trọng',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Ghim hoặc gắn sao để xem nhanh '
+                      'tại trang chủ',
+                    ),
+                    value: _isFavorite,
+                    activeThumbColor: AppColors.warning,
+                    onChanged: (bool value) {
+                      setState(() {
+                        _isFavorite = value;
+                      });
+                    },
+                    secondary: Icon(
+                      _isFavorite
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: _isFavorite
+                          ? AppColors.warning
+                          : colors.onSurfaceVariant,
+                    ),
+                  ),
+
+                  const SizedBox(height: 40),
+                ],
               ),
               textInputAction: TextInputAction.next,
             ),
