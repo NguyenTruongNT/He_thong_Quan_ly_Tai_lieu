@@ -11,12 +11,15 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SupabaseOptions {
-  static const String _defaultUrl = String.fromEnvironment(
+  static const String _defaultUrl = '';
+  static const String _envUrl = String.fromEnvironment(
     'SUPABASE_URL',
     defaultValue: '',
   );
 
-  static const String _defaultAnonKey = String.fromEnvironment(
+  static const String _defaultAnonKey =
+      '';
+  static const String _envAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
     defaultValue: '',
   );
@@ -24,8 +27,10 @@ class SupabaseOptions {
   static const String prefKeyUrl = 'custom_supabase_url';
   static const String prefKeyAnonKey = 'custom_supabase_anon_key';
 
-  static String _currentUrl = normalizeUrl(_defaultUrl);
-  static String _currentAnonKey = _defaultAnonKey;
+  static String _currentUrl =
+      normalizeUrl(_envUrl.isNotEmpty ? _envUrl : _defaultUrl);
+  static String _currentAnonKey =
+      _envAnonKey.isNotEmpty ? _envAnonKey : _defaultAnonKey;
 
   static String get url => _currentUrl;
   static String get anonKey => _currentAnonKey;
@@ -105,8 +110,8 @@ class SupabaseOptions {
 
   /// Xóa cấu hình tùy chỉnh để quay về mặc định
   static Future<void> clearConfig() async {
-    _currentUrl = normalizeUrl(_defaultUrl);
-    _currentAnonKey = _defaultAnonKey;
+    _currentUrl = normalizeUrl(_envUrl.isNotEmpty ? _envUrl : _defaultUrl);
+    _currentAnonKey = _envAnonKey.isNotEmpty ? _envAnonKey : _defaultAnonKey;
 
     try {
       final prefs = await SharedPreferences.getInstance();

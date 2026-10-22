@@ -13,9 +13,12 @@ import '../widgets/framework/page_framework.dart';
 import '../widgets/sync_status_banner.dart';
 import 'account_page.dart';
 import 'add_edit_document_page.dart';
+import 'borrow/borrow_management_page.dart';
 import 'document_detail_page.dart';
 import 'document_list_page.dart';
 import 'document_search_page.dart';
+import '../struct/borrow_service.dart';
+import '../struct/models/borrow_request_model.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -38,11 +41,22 @@ class _HomePageState extends State<HomePage> {
         _subjects = {for (final subject in subjects) subject.id: subject};
       });
     });
+
+    // Lắng nghe sự kiện thông báo Realtime Mượn / Trả (Vũ Hải Đăng - Checklist 01 & 04)
+    final userId = SupabaseService.instance.currentUser?.id ?? database.activeOwnerId;
+    BorrowService.instance.startRealtimeListener(
+      userId: userId,
+      onNotification: (event) {
+        if (!mounted) return;
+        openSnackbar(context, message: event.message);
+      },
+    );
   }
 
   @override
   void dispose() {
     _subjectsSubscription?.cancel();
+    BorrowService.instance.stopRealtimeListener();
     super.dispose();
   }
 
@@ -201,6 +215,51 @@ class _HomePageState extends State<HomePage> {
       maxWidth: 1200,
       showBackButton: false,
       actions: [
+        // Nút Mượn / Trả tài liệu kèm Badge đếm yêu cầu đang chờ duyệt (Vũ Hải Đăng - Checklist 04)
+        StreamBuilder<List<BorrowRequestModel>>(
+          stream: BorrowService.instance.watchAllBorrowRequests(),
+          builder: (context, snapshot) {
+            final requests = snapshot.data ?? [];
+            final currentUserId = SupabaseService.instance.currentUser?.id ?? database.activeOwnerId;
+            final pendingCount = requests.where((r) {
+              return (r.ownerId == currentUserId || (r.ownerId == 'local' && currentUserId == 'local')) &&
+                  r.isPending;
+            }).length;
+
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  onPressed: () => pushRoute(context, const BorrowManagementPage()),
+                  tooltip: 'Mượn / Trả tài liệu',
+                  icon: const Icon(Icons.handshake_outlined),
+                ),
+                if (pendingCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: AppColors.error,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        '$pendingCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
         IconButton(
           onPressed: () async {
             await pushRoute(context, const AccountPage());
@@ -294,6 +353,12 @@ class _HomePageState extends State<HomePage> {
                           value: '${stats.favoriteCount}',
                           icon: Icons.star_outline_rounded,
                         ),
+                        _Metric(
+                          label: 'Mượn/Trả',
+                          value: 'Xem',
+                          icon: Icons.handshake_outlined,
+                          onTap: () => pushRoute(context, const BorrowManagementPage()),
+                        ),
                       ],
                     ),
                   ],
@@ -380,21 +445,33 @@ class _Metric extends StatelessWidget {
     required this.label,
     required this.value,
     required this.icon,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, color: Colors.white, size: 18),
         const SizedBox(width: 6),
         Text('$value $label', style: const TextStyle(color: Colors.white)),
       ],
+    );
+
+    if (onTap == null) return row;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+        child: row,
+      ),
     );
   }
 }

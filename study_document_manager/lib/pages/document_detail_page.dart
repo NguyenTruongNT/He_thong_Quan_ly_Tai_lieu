@@ -15,6 +15,10 @@ import '../widgets/cloud/cloud_sync_badge.dart';
 import '../widgets/confirm_delete_dialog.dart';
 import '../widgets/framework/page_framework.dart';
 import 'add_edit_document_page.dart';
+import '../struct/borrow_service.dart';
+import '../struct/models/borrow_request_model.dart';
+import '../widgets/borrow/borrow_request_dialog.dart';
+import 'borrow/borrow_management_page.dart';
 
 class DocumentDetailPage extends StatefulWidget {
   const DocumentDetailPage({
@@ -233,6 +237,11 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       title: 'Chi tiết tài liệu',
       showBackButton: !widget.isEmbedded,
       actions: [
+        IconButton(
+          onPressed: () => pushRoute(context, const BorrowManagementPage()),
+          tooltip: 'Quản lý mượn/trả',
+          icon: const Icon(Icons.handshake_outlined),
+        ),
         if (_canManageSharing)
           IconButton(
             onPressed: _manageSharing,
@@ -393,6 +402,206 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                   .toList(),
             ),
           ],
+
+          // ===================================================================
+          // MỤC MƯỢN / TRẢ TÀI LIỆU HỌC TẬP (VŨ HẢI ĐĂNG - CHECKLIST 04)
+          // ===================================================================
+          const SizedBox(height: 12),
+          StreamBuilder<List<BorrowRequestModel>>(
+            stream: BorrowService.instance.watchAllBorrowRequests(),
+            builder: (context, snapshot) {
+              final requests = snapshot.data ?? [];
+              final currentUserId = SupabaseService.instance.currentUser?.id ?? database.activeOwnerId;
+              
+              // Tìm yêu cầu mượn mới nhất của người dùng hiện tại cho tài liệu này
+              final myReqs = requests.where((r) =>
+                  r.documentId == document.id &&
+                  (r.borrowerId == currentUserId ||
+                      (currentUserId.contains('@') && r.borrowerEmail == currentUserId))).toList();
+              final latestReq = myReqs.isNotEmpty ? myReqs.first : null;
+
+              return Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withAlpha(20),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.menu_book_rounded, color: AppColors.primary, size: 22),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Mượn / Trả tài liệu',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                                Text(
+                                  document.isPhysical
+                                      ? 'Sách/giáo trình vật lý có sẵn tại trường'
+                                      : 'Tài liệu học tập chia sẻ giữa sinh viên',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (latestReq != null) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: latestReq.borrowStatus.color.withAlpha(25),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: latestReq.borrowStatus.color.withAlpha(80)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(latestReq.borrowStatus.icon, size: 12, color: latestReq.borrowStatus.color),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    latestReq.borrowStatus.displayName,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: latestReq.borrowStatus.color,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (document.locationName != null && document.locationName!.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(70),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.location_on_rounded, size: 18, color: Colors.redAccent),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Vị trí lưu trữ: ${document.locationName}',
+                                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (latestReq != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withAlpha(15),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.blue.withAlpha(40)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.info_outline_rounded, size: 15, color: Colors.blue),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    latestReq.isPending
+                                        ? 'Yêu cầu của bạn đang chờ chủ sở hữu phê duyệt'
+                                        : (latestReq.isApproved
+                                            ? 'Bạn đang mượn tài liệu này'
+                                            : 'Yêu cầu mượn đã hoàn tất'),
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue),
+                                  ),
+                                ],
+                              ),
+                              if (latestReq.dueDate != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Hạn trả: ${DocumentFormatters.formatDateTime(latestReq.dueDate)}',
+                                  style: const TextStyle(fontSize: 11.5, color: Colors.blueGrey),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          if (!_canManageSharing) ...[
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed: () async {
+                                  await BorrowRequestDialog.show(
+                                    context,
+                                    document: document,
+                                    onRequestSent: () => setState(() {}),
+                                  );
+                                },
+                                icon: const Icon(Icons.send_rounded, size: 18),
+                                label: Text(
+                                  latestReq == null ? 'Gửi yêu cầu mượn tài liệu' : 'Gửi yêu cầu mượn mới',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                          ] else ...[
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed: () => pushRoute(
+                                  context,
+                                  const BorrowManagementPage(initialTabIndex: 1),
+                                ),
+                                icon: const Icon(Icons.inbox_rounded, size: 18),
+                                label: const Text('Xem yêu cầu gửi tới tôi'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            onPressed: () => pushRoute(context, const BorrowManagementPage()),
+                            icon: const Icon(Icons.list_alt_rounded, size: 18),
+                            label: const Text('DS Mượn'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );

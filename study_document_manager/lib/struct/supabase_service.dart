@@ -48,19 +48,23 @@ class SupabaseService {
     }
 
     try {
-      if (!_isInitialized) {
-        try {
-          await Supabase.initialize(
-            url: url,
-            anonKey: anonKey,
-            authOptions: const FlutterAuthClientOptions(
-              authFlowType: AuthFlowType.pkce,
-            ),
-          );
-        } catch (_) {}
-        _isInitialized = true;
+      try {
+        await Supabase.initialize(
+          url: url,
+          anonKey: anonKey,
+          authOptions: const FlutterAuthClientOptions(
+            authFlowType: AuthFlowType.pkce,
+          ),
+        );
+      } catch (e) {
+        debugPrint('[SupabaseService] Supabase.initialize note: $e');
       }
-      _client = SupabaseClient(url, anonKey);
+      try {
+        _client = Supabase.instance.client;
+      } catch (_) {
+        _client = SupabaseClient(url, anonKey);
+      }
+      _isInitialized = true;
       return true;
     } catch (e) {
       debugPrint('[SupabaseService] Khởi tạo Supabase thất bại: $e');
@@ -95,6 +99,15 @@ class SupabaseService {
       email: email.trim(),
       password: password,
       data: displayName != null ? {'full_name': displayName} : null,
+    );
+  }
+
+  /// Đăng nhập bằng tài khoản GitHub qua Supabase OAuth
+  Future<bool> signInWithGitHub() async {
+    _ensureInitialized();
+    return await client!.auth.signInWithOAuth(
+      OAuthProvider.github,
+      redirectTo: kIsWeb ? null : 'io.supabase.cashew://login-callback/',
     );
   }
 
