@@ -33,6 +33,8 @@ class SupabaseRemoteSyncService implements RemoteSyncService {
   Future<bool> ping() async {
     try {
       if (!_service.isInitialized || _client == null) return false;
+      // Chỉ coi là sẵn sàng đồng bộ nếu đã có tài khoản người dùng đăng nhập
+      if (_service.currentUser == null) return false;
       await _client!.from('profiles').select('id').limit(1);
       return true;
     } catch (_) {
@@ -168,6 +170,20 @@ class SupabaseRemoteSyncService implements RemoteSyncService {
       var title = (docData['title'] ?? 'Tài liệu học tập').toString().trim();
       if (title.length < 3) title = '$title   ';
       if (title.length > 250) title = title.substring(0, 250);
+
+      // Đảm bảo Profile của user tồn tại trong bảng profiles trước khi insert vào documents (tránh lỗi khóa ngoại FK)
+      try {
+        await _client!.from('profiles').upsert({
+          'id': user.id,
+          'email': user.email ?? '',
+          'display_name': user.userMetadata?['display_name'] ??
+              user.userMetadata?['full_name'] ??
+              user.email?.split('@').first ??
+              'Sinh viên',
+        }, onConflict: 'id');
+      } catch (e) {
+        debugPrint('[SupabaseRemoteSyncService] ensure profile error (ignored): $e');
+      }
 
       // LỌC CHỈ GỬI CÁC CỘT CÓ THẬT TRONG BẢNG DOCUMENTS CỦA SUPABASE:
       // (Không gửi subject_id, status, priority, deadline, is_favorite, v.v. của SQLite)

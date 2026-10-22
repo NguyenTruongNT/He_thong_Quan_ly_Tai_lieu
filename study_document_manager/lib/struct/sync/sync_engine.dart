@@ -271,7 +271,10 @@ class SyncEngine {
       errors: errors,
     );
     snapshot.value = snapshot.value.copyWith(
-      phase: result.success ? SyncPhase.success : SyncPhase.error,
+      isOnline: !networkDown,
+      phase: result.success
+          ? SyncPhase.success
+          : (networkDown ? SyncPhase.idle : SyncPhase.error),
       pendingCount: pending,
       lastResult: result,
       lastSyncAt: await database.getLastSyncAt(),

@@ -270,9 +270,41 @@ class _SupabaseCloudViewState extends State<_SupabaseCloudView> {
 
   Future<void> _signOutSupabase() async {
     await SupabaseService.instance.signOut();
+    await database.setActiveOwner('local');
+    syncEngine?.updateOwnerId('local');
+    if (mounted) {
+      setState(() {
+        _statusMessage = 'Đã đăng xuất khỏi Supabase và quay lại tài khoản Local.';
+      });
+    }
+  }
+
+  Future<void> _signInGitHub() async {
+    if (!SupabaseService.instance.isInitialized) {
+      await _saveAndConnect();
+      if (!SupabaseService.instance.isInitialized) return;
+    }
+
     setState(() {
-      _statusMessage = 'Đã đăng xuất khỏi Supabase.';
+      _isAuthBusy = true;
+      _statusMessage = null;
     });
+
+    try {
+      await SupabaseService.instance.signInWithGitHub();
+      if (mounted) {
+        setState(() => _isAuthBusy = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isAuthBusy = false;
+          _isError = true;
+          _statusMessage =
+              'Đăng nhập GitHub thất bại: $e\n(Gợi ý: Cần bật GitHub Provider trên Supabase Dashboard, hoặc sử dụng Email/Mật khẩu bên trên để đăng nhập ngay).';
+        });
+      }
+    }
   }
 
   @override
@@ -503,6 +535,21 @@ class _SupabaseCloudViewState extends State<_SupabaseCloudView> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: _isAuthBusy ? null : _signInGitHub,
+                    icon: const Icon(Icons.code_rounded, size: 18),
+                    label: const Text('Đăng nhập bằng GitHub (OAuth)'),
+                  ),
                 ),
               ],
             ),
@@ -865,6 +912,7 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
     });
     try {
       await database.setActiveOwner(ownerId);
+      syncEngine?.updateOwnerId(ownerId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -885,6 +933,11 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
   Widget build(BuildContext context) {
     final activeOwnerId = database.activeOwnerId;
     final colorScheme = Theme.of(context).colorScheme;
+
+    final accountsMap = Map<String, String>.from(_accounts);
+    if (!accountsMap.containsKey(activeOwnerId)) {
+      accountsMap[activeOwnerId] = 'Tài khoản hiện tại ($activeOwnerId)';
+    }
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
@@ -922,14 +975,15 @@ class _LocalDemoAccountsViewState extends State<_LocalDemoAccountsView> {
         ),
         const SizedBox(height: 24),
         DropdownButtonFormField<String>(
-          initialValue: _accounts.containsKey(activeOwnerId) ? activeOwnerId : 'local',
+          key: ValueKey(activeOwnerId),
+          initialValue: accountsMap.containsKey(activeOwnerId) ? activeOwnerId : 'local',
           decoration: InputDecoration(
             labelText: 'Tài khoản SQLite hiện đang sử dụng',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             prefixIcon: const Icon(Icons.person_pin_circle_outlined),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ),
-          items: _accounts.entries
+          items: accountsMap.entries
               .map(
                 (entry) => DropdownMenuItem(
                   value: entry.key,
