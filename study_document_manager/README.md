@@ -98,29 +98,108 @@ study_document_manager/
 - Dart SDK `>= 3.0.0`
 
 ### Các bước khởi chạy
-1. Mở terminal tại thư mục dự án:
+1. Mở terminal tại thư mục ứng dụng (không phải thư mục gốc repository):
    ```bash
-   cd study_document_manager
+   cd .\study_document_manager
    ```
 2. Cài đặt các gói phụ thuộc:
    ```bash
    flutter pub get
    ```
-3. Chạy ứng dụng trên máy ảo Android/iOS hoặc Windows desktop:
+3. Chạy ứng dụng trên máy ảo Android hoặc Windows desktop:
    ```bash
    flutter run
    ```
 
+Firebase bị tắt mặc định để có thể chạy ứng dụng không cần thiết lập Firebase.
+Xem [hướng dẫn Supabase và kiểm thử chia sẻ](./SUPABASE_SETUP.md) để thiết lập
+schema/RLS, tạo tài khoản demo và hiểu rõ phần nào hiện chỉ chạy cục bộ.
+
 ---
 
 ## 🧪 5. Kiểm thử tự động (Automated Testing)
-Dự án được viết đầy đủ bộ Unit Test & Widget Test cho cả 3 tầng kiến trúc:
+Dự án được viết đầy đủ bộ Unit Test & Widget Test cho cả 3 tầng kiến trúc, bao gồm cả tầng đồng bộ Offline-First:
 ```bash
 flutter test
 ```
-Kết quả kiểm thử đạt **15/15 test cases pass (100%)**.
+Kết quả kiểm thử đạt **42/42 test cases pass (100%)**, trong đó:
+
+- 15 test nền tảng: Data (CRUD/Search/Reactive Stream), Struct (Validation/Stats/Formatters), Presentation (Widgets).
+- 6 test checksum MD5/SHA-256 với vector chuẩn.
+- 13 test SyncEngine: PUSH/PULL, checksum, `delete_logs`, mất mạng, xung đột LWW, retry.
+- 4 test hiệu năng mạng yếu + mất gói.
+- 4 test giao diện thẻ trạng thái đồng bộ.
 
 ## 🎨 6. Giao diện và nhập môn học
 - Giao diện dùng dải màu Indigo–Violet–Blue, có biến thể sáng/tối và giới hạn chiều rộng nội dung trên Chrome để dễ đọc.
 - Trên màn hình nhỏ, các thẻ thống kê tự chuyển thành bố cục hai cột để tránh tràn viền.
 - Khi thêm tài liệu, chọn môn có sẵn từ gợi ý hoặc nhập môn mới theo định dạng `MÃ MÔN - Tên môn`. Môn mới được lưu cùng tài liệu; mã hoặc tên bị trùng sẽ được báo để tránh tạo nhầm môn.
+
+## 🔥 7. Firebase Authentication và Cloud Storage
+
+Ứng dụng tham chiếu Firebase project `cashew-study-docs-3afed`. Phần Auth/Storage trong mã nguồn hiện được bật cho Android và Web; iOS chưa được cấu hình và không được xem là nền tảng đã kiểm chứng:
+
+- **Firebase Authentication:** đăng nhập/đăng xuất bằng Google, xem trạng thái đăng nhập và hồ sơ cơ bản tại nút tài khoản trên Dashboard.
+- **Cloud Storage:** chọn PDF, Word, PowerPoint, Excel hoặc TXT tối đa 20 MB. File được tải lên `users/{uid}/documents/{documentId}/{fileId}/{fileName}`; tiến trình upload được hiển thị.
+- **SQLite:** tiếp tục lưu metadata cục bộ. Cột `storage_path` giữ đường dẫn Storage; migration hiện tại thêm các cột Storage, sync và owner-scope theo từng phiên bản. Metadata hiện chưa đồng bộ giữa các thiết bị.
+- **Rules:** `storage.rules` chỉ cho phép chủ sở hữu đã đăng nhập đọc/xóa và tạo/cập nhật file hợp lệ, giới hạn MIME và kích thước. Ứng dụng không lưu Download URL có token vào SQLite; không chia sẻ URL tải xuống được tạo khi mở file ra ngoài vì URL dạng token có thể được dùng như liên kết truy cập.
+
+### Cấu hình Firebase Console cần hoàn tất
+
+1. Nhóm trưởng mở **Project settings → Users and permissions** và mời thành viên bằng email Google; chỉ cấp quyền cần thiết để cấu hình project/deploy Rules, không chia sẻ mật khẩu.
+2. Trong **Authentication → Sign-in method**, bật nhà cung cấp **Google** và chọn email hỗ trợ.
+3. Trong **Storage**, tạo default bucket. Kiểm tra gói/billing mà Console yêu cầu cho bucket, chọn region phù hợp (khó đổi sau khi tạo) và cấu hình cảnh báo ngân sách trước khi upload.
+4. Với Android, thêm SHA-1 của debug/release signing key vào app Android trong Firebase Console. Có thể xem fingerprint từ thư mục `android` bằng `.\gradlew signingReport`; sau khi thêm SHA, tải/cập nhật cấu hình Android nếu Firebase yêu cầu.
+5. Web cần cho phép domain đang dùng trong Authentication settings → Authorized domains. iOS chưa được hỗ trợ/cấu hình trong bản hiện tại.
+
+### Cấu hình lại máy thành viên hoặc project Firebase
+
+Chạy từ thư mục `study_document_manager`:
+
+```powershell
+firebase login
+dart pub global activate flutterfire_cli
+flutter pub get
+dart pub global run flutterfire_cli:flutterfire configure --project=cashew-study-docs-3afed --platforms=android,web
+```
+
+Không dán URL đăng nhập Google vào PowerShell. Chỉ mở URL trong trình duyệt khi Firebase CLI yêu cầu đăng nhập. Các tệp `lib/firebase_options.dart` và `android/app/google-services.json` gắn ứng dụng với đúng Firebase project. iOS cần được cấu hình riêng trước khi bật hỗ trợ.
+
+Sau khi bật/tạo Storage bucket trong Console, triển khai rules từ thư mục ứng dụng:
+
+```powershell
+firebase deploy --only storage --project=cashew-study-docs-3afed
+```
+
+### Kiểm tra luồng demo
+
+1. Chạy app trên Android hoặc Chrome và đăng nhập bằng Google.
+2. Tạo/chỉnh sửa tài liệu, chọn một file hợp lệ và lưu; xác nhận tiến độ upload hoàn tất.
+3. Kiểm tra file trong Firebase Console dưới thư mục UID tương ứng; mở file từ trang chi tiết.
+4. Thử người dùng khác truy cập file và thử file quá 20 MB hoặc sai loại; Storage Rules phải từ chối.
+5. Xóa tài liệu; ứng dụng xóa object Storage trước rồi mới xóa metadata SQLite. Nếu Storage báo lỗi, metadata được giữ lại và lỗi được báo rõ.
+
+### Báo cáo và slide
+
+- Báo cáo phân tích đủ checklist 1–7: [BAO_CAO_TICH_HOP_CLOUD.md](BAO_CAO_TICH_HOP_CLOUD.md).
+- Slide trình chiếu: [SLIDE_FIREBASE_CLOUD.pptx](SLIDE_FIREBASE_CLOUD.pptx); nội dung có thể chỉnh ở [SLIDE_FIREBASE_CLOUD.md](SLIDE_FIREBASE_CLOUD.md). Bản hiện tại ghi Nhóm 12 và đủ 4 thành viên.
+- Báo cáo phân biệt phần code Auth/Storage, SQLite local, mock sync và các phần mở rộng. Build/test thành công không thay thế cho kiểm tra đăng nhập, bucket và Rules trên Firebase Console thật.
+
+---
+
+## 🔄 8. Local Cache & Đồng bộ mô phỏng (Offline-First)
+
+Ứng dụng có cơ chế **Offline-First**: thao tác cục bộ được ghi vào SQLite và tệp có thể được lưu cache. Bộ `SyncEngine` hiện kết nối `MockRemoteSyncService` trong bộ nhớ để demo/kiểm thử; nó **không đẩy metadata lên Firebase, AWS hay Cloud thật**, và dữ liệu mock không bền qua lần chạy.
+
+- **Hàng đợi mô phỏng:** bảng `sync_outbox` lưu thao tác `upsert`/`delete` để chạy qua remote adapter.
+- **Trao đổi hai chiều mô phỏng:** `SyncEngine.push`/`pull` dùng mock in-memory; chưa phải đồng bộ metadata đa thiết bị.
+- **Toàn vẹn dữ liệu:** checksum **MD5/SHA-256** (`crypto`) kiểm tra tệp trước khi đẩy và sau khi kéo.
+- **Đồng bộ xóa:** bảng `delete_logs` (tombstone) đảm bảo xóa hai chiều, không "hồi sinh" dữ liệu.
+- **Xung đột:** Last-Write-Wins có kiểm soát dựa trên `version` + `updatedDate`.
+- **Kết nối:** `HeartbeatNetworkMonitor` tự động kích hoạt đồng bộ khi mạng phục hồi.
+- **Giao diện:** thẻ `SyncStatusBanner` trên Dashboard hiển thị rõ trạng thái đồng bộ mô phỏng, không đánh dấu mock là Cloud thật.
+- **Backend Cloud:** chưa có triển khai `RemoteSyncService` cho Firebase/Firestore hoặc AWS; nếu cần đồng bộ thật, phải phát triển adapter và Rules/schema tương ứng.
+
+**Schema SQLite hiện tại là v4** (tự động migration): v2 bổ sung `storage_path`, v3 thêm các trường đồng bộ và 3 bảng `delete_logs`, `sync_outbox`, `sync_state`, v4 bổ sung phạm vi sở hữu cho môn học/tài liệu.
+
+📄 Chi tiết kiến trúc, mô hình dữ liệu, kết quả kiểm thử và hiệu năng mạng yếu: [SON_BAOCAO_OFFLINE_SYNC.md](SON_BAOCAO_OFFLINE_SYNC.md).

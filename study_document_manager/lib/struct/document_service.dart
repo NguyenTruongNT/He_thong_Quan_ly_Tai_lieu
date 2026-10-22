@@ -1,5 +1,15 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
+
 import '../database/databaseGlobal.dart';
+import 'checksum_utils.dart';
+import 'firebase_storage_service.dart';
+import 'google_auth_service.dart';
 import 'models/document_models.dart';
+import 'models/sync_models.dart';
+import 'sync/sync_global.dart';
 
 // =====================================================================
 // [KIẾN TRÚC CASHEW - TẦNG NGHIỆP VỤ: DỊCH VỤ XỬ LÝ LOGIC (DOCUMENT SERVICE)]
@@ -110,8 +120,13 @@ class DocumentService {
       return null; // Được phép để trống
     }
     final trimmed = url.trim();
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null &&
+        uri.scheme == 'firebase-storage' &&
+        uri.path.isNotEmpty) {
+      return null;
+    }
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      final uri = Uri.tryParse(trimmed);
       if (uri == null || !uri.hasAuthority) {
         return 'Định dạng đường dẫn liên kết URL không hợp lệ';
       }
@@ -149,7 +164,9 @@ class DocumentService {
       result = result.where((doc) {
         final matchTitle = doc.title.toLowerCase().contains(query);
         final matchNotes = doc.notes.toLowerCase().contains(query);
-        final matchTags = doc.tags.any((tag) => tag.toLowerCase().contains(query));
+        final matchTags = doc.tags.any(
+          (tag) => tag.toLowerCase().contains(query),
+        );
         return matchTitle || matchNotes || matchTags;
       }).toList();
     }
@@ -175,7 +192,9 @@ class DocumentService {
         result.sort((a, b) => b.updatedDate.compareTo(a.updatedDate));
         break;
       case DocumentSortOption.titleAsc:
-        result.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        result.sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
         break;
       case DocumentSortOption.deadlineEarliest:
         result.sort((a, b) {
@@ -195,10 +214,47 @@ class DocumentService {
 
   // ===================================================================
   // 3. ĐIỀU PHỐI THAO TÁC CƠ SỞ DỮ LIỆU (DATABASE ORCHESTRATION)
+  // Chiến lược Offline-First: ghi cục bộ ngay + đưa vào outbox để đồng bộ.
   // ===================================================================
 
-  /// Tạo mới tài liệu có kiểm tra tính hợp lệ
-  static Future<void> saveDocument(DocumentModel document) async {
+  /// Xử lý tệp đính kèm: tính checksum và cache cục bộ (nếu bật đồng bộ).
+  static Future<DocumentModel> _attachFileIfAny(
+    DocumentModel document, {
+    List<int>? fileBytes,
+    String? fileName,
+  }) async {
+    if (fileBytes == null || fileBytes.isEmpty) return document;
+
+    final checksum = ChecksumUtils.computeResult(
+      fileBytes,
+      algorithm: ChecksumUtils.defaultAlgorithm,
+    );
+    var result = document.copyWith(
+      checksum: checksum.value,
+      checksumAlgorithm: checksum.algorithm.nameString,
+      updatedDate: document.updatedDate,
+    );
+
+    if (syncEngine != null) {
+      final path = await syncEngine!.fileStore.save(
+        fileName ?? '${document.id}.bin',
+        fileBytes,
+      );
+      result = result.copyWith(
+        localPath: path,
+        updatedDate: result.updatedDate,
+      );
+    }
+    return result;
+  }
+
+  /// Tạo mới tài liệu có kiểm tra tính hợp lệ (Offline-First).
+  static Future<void> saveDocument(
+    DocumentModel document, {
+    List<int>? fileBytes,
+    String? fileName,
+    bool fileAlreadyUploaded = false,
+  }) async {
     final titleError = validateTitle(document.title);
     if (titleError != null) {
       throw ArgumentError(titleError);
@@ -208,28 +264,139 @@ class DocumentService {
       throw ArgumentError(urlError);
     }
 
-    await database.insertDocument(document);
+    var doc = await _attachFileIfAny(
+      document,
+      fileBytes: fileBytes,
+      fileName: fileName,
+    );
+    doc = doc.copyWith(
+      syncStatus: isSyncEnabled
+          ? SyncStatus.pendingUpload
+          : SyncStatus.localOnly,
+      updatedDate: doc.updatedDate,
+    );
+    await database.insertDocument(doc);
+    await _enqueueAndSync(
+      doc.id,
+      SyncOperation.upsert,
+      payload: {'file_uploaded': fileAlreadyUploaded},
+    );
   }
 
-  /// Cập nhật tài liệu
-  static Future<void> updateDocument(DocumentModel document) async {
+  /// Cập nhật tài liệu (Offline-First, tăng version để phát hiện xung đột).
+  static Future<void> updateDocument(
+    DocumentModel document, {
+    List<int>? fileBytes,
+    String? fileName,
+    bool fileAlreadyUploaded = false,
+  }) async {
     final titleError = validateTitle(document.title);
     if (titleError != null) {
       throw ArgumentError(titleError);
     }
-    final updated = document.copyWith(updatedDate: DateTime.now());
-    await database.updateDocument(updated);
+
+    var doc = document.copyWith(
+      updatedDate: DateTime.now(),
+      version: document.version + 1,
+    );
+    doc = await _attachFileIfAny(doc, fileBytes: fileBytes, fileName: fileName);
+    doc = doc.copyWith(
+      syncStatus: isSyncEnabled ? SyncStatus.pendingUpload : doc.syncStatus,
+      updatedDate: doc.updatedDate,
+    );
+    final updatedCount = await database.updateDocument(doc);
+    if (updatedCount != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
+    await _enqueueAndSync(
+      doc.id,
+      SyncOperation.upsert,
+      payload: {'file_uploaded': fileAlreadyUploaded},
+    );
   }
 
-  /// Xóa tài liệu
+  /// Xóa tài liệu theo cơ chế tombstone: ghi `delete_logs` + outbox,
+  /// sau đó xóa cục bộ. Cloud sẽ được đồng bộ khi có mạng.
   static Future<void> deleteDocument(String id) async {
-    await database.deleteDocument(id);
+    final document = await database.getDocumentById(id);
+    if (document == null) return;
+    if (document.isShared ||
+        await database.getDocumentOwnerId(id) != database.activeOwnerId) {
+      throw StateError('Chỉ chủ sở hữu mới có thể xóa tài liệu.');
+    }
+
+    final storagePath = document.storagePath;
+    if (storagePath != null) {
+      if (!GoogleAuthService.instance.isConfigured) {
+        throw StateError('Firebase chưa được cấu hình trên nền tảng hiện tại.');
+      }
+      if (GoogleAuthService.instance.currentUser == null) {
+        throw StateError('Đăng nhập Google trước khi xóa tệp trên Cloud.');
+      }
+      await FirebaseStorageService.instance.delete(storagePath);
+    }
+
+    final deleteLogId = const Uuid().v4();
+
+    await database.insertDeleteLog(
+      DeleteLogModel(
+        id: deleteLogId,
+        documentId: id,
+        ownerId: syncEngine?.ownerId,
+        storagePath: storagePath,
+        checksum: document.checksum,
+        deletedAt: DateTime.now(),
+        source: 'local',
+        syncStatus: DeleteLogStatus.pending,
+      ),
+    );
+
+    final deletedCount = await database.deleteDocument(id);
+    if (deletedCount != 1) {
+      throw StateError('Không thể xóa tài liệu "$id" khỏi cơ sở dữ liệu.');
+    }
+
+    if (document.localPath case final localPath?) {
+      if (syncEngine != null) {
+        try {
+          await syncEngine!.fileStore.delete(localPath);
+        } catch (error) {
+          debugPrint('Không thể dọn tệp cache "$localPath": $error');
+        }
+      }
+    }
+
+    if (isSyncEnabled) {
+      await database.enqueueOutbox(
+        entityId: id,
+        operation: SyncOperation.delete,
+        payload: {'delete_log_id': deleteLogId, 'storage_path': storagePath},
+      );
+      unawaited(syncEngine!.syncNow());
+    }
+  }
+
+  /// Đưa thao tác vào outbox và kích hoạt đồng bộ nền (nếu đã bật).
+  static Future<void> _enqueueAndSync(
+    String documentId,
+    SyncOperation operation, {
+    Map<String, dynamic>? payload,
+  }) async {
+    if (!isSyncEnabled) return;
+    await database.enqueueOutbox(
+      entityId: documentId,
+      operation: operation,
+      payload: payload,
+    );
+    unawaited(syncEngine!.syncNow());
   }
 
   /// Bật/Tắt trạng thái yêu thích
   static Future<void> toggleFavorite(DocumentModel doc) async {
     final updated = doc.copyWith(isFavorite: !doc.isFavorite);
-    await database.updateDocument(updated);
+    if (await database.updateDocument(updated) != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
   }
 
   /// Đổi trạng thái xử lý bài tập (Hoàn thành / Chưa làm)
@@ -238,6 +405,8 @@ class DocumentService {
         ? DocumentStatus.inProgress
         : DocumentStatus.completed;
     final updated = doc.copyWith(status: newStatus);
-    await database.updateDocument(updated);
+    if (await database.updateDocument(updated) != 1) {
+      throw StateError('Bạn không có quyền chỉnh sửa tài liệu này.');
+    }
   }
 }

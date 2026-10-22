@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:study_document_manager/database/app_database.dart';
 import 'package:study_document_manager/struct/models/document_models.dart';
+import 'package:study_document_manager/struct/models/document_permission.dart';
 
 // =====================================================================
 // [KIẾN TRÚC CASHEW - KIỂM THỬ TẦNG DỮ LIỆU (DATA LAYER TEST)]
@@ -28,7 +29,11 @@ void main() {
       final subjects = await db.getAllSubjects();
       final docs = await db.getAllDocuments();
 
-      expect(subjects.isNotEmpty, isTrue, reason: 'Phải có môn học mẫu ban đầu');
+      expect(
+        subjects.isNotEmpty,
+        isTrue,
+        reason: 'Phải có môn học mẫu ban đầu',
+      );
       expect(docs.isNotEmpty, isTrue, reason: 'Phải có tài liệu mẫu ban đầu');
     });
 
@@ -40,6 +45,7 @@ void main() {
         type: DocumentType.lecture,
         notes: 'Ghi chú bài học kiểm thử',
         fileUrl: 'https://example.com/test.pdf',
+        storagePath: 'users/test-user/documents/test-doc/file-id/test.pdf',
         tags: ['UnitTest', 'Cashew'],
         status: DocumentStatus.pending,
         priority: PriorityLevel.high,
@@ -53,14 +59,21 @@ void main() {
 
       final retrieved = await db.getDocumentById('test_doc_101');
       expect(retrieved, isNotNull);
-      expect(retrieved!.title, equals('Kiểm thử Đơn vị trong Kiến trúc Cashew'));
+      expect(
+        retrieved!.title,
+        equals('Kiểm thử Đơn vị trong Kiến trúc Cashew'),
+      );
       expect(retrieved.tags, contains('UnitTest'));
       expect(retrieved.isFavorite, isTrue);
+      expect(
+        retrieved.storagePath,
+        equals('users/test-user/documents/test-doc/file-id/test.pdf'),
+      );
     });
 
     test('3. Chỉnh sửa thông tin tài liệu (Update)', () async {
       final docs = await db.getAllDocuments();
-      final targetDoc = docs.first;
+      final targetDoc = docs.firstWhere((document) => !document.isShared);
 
       final updatedDoc = targetDoc.copyWith(
         title: 'Tiêu đề đã được sửa thành công',
@@ -76,13 +89,108 @@ void main() {
 
     test('4. Xóa tài liệu học tập (Delete)', () async {
       final docs = await db.getAllDocuments();
-      final targetDoc = docs.first;
+      final targetDoc = docs.firstWhere((document) => !document.isShared);
 
       await db.deleteDocument(targetDoc.id);
 
       final retrieved = await db.getDocumentById(targetDoc.id);
-      expect(retrieved, isNull, reason: 'Tài liệu sau khi xóa phải trả về null');
+      expect(
+        retrieved,
+        isNull,
+        reason: 'Tài liệu sau khi xóa phải trả về null',
+      );
     });
+
+    test('Shared documents cannot be updated or deleted', () async {
+      final sharedDocument = (await db.getAllDocuments()).firstWhere(
+        (document) => document.isShared,
+      );
+
+      expect(
+        await db.updateDocument(
+          sharedDocument.copyWith(title: 'Unauthorized edit'),
+        ),
+        0,
+      );
+      expect(await db.deleteDocument(sharedDocument.id), 0);
+      expect(
+        (await db.getDocumentById(sharedDocument.id))?.title,
+        sharedDocument.title,
+      );
+    });
+
+    test(
+      'Sharing enforces viewer, editor, and private access for three users',
+      () async {
+        final now = DateTime.now();
+        final privateDocument = DocumentModel(
+          id: 'permission_test_doc',
+          title: 'Tài liệu kiểm thử phân quyền',
+          subjectId: 'sub_swe',
+          type: DocumentType.reference,
+          notes: 'Quyền owner, viewer và editor.',
+          createdDate: now,
+          updatedDate: now,
+        );
+        await db.insertDocument(privateDocument);
+        await db.shareDocument(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-1',
+          role: DocumentPermissionRole.viewer,
+        );
+        await db.shareDocument(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-2',
+          role: DocumentPermissionRole.editor,
+        );
+
+        await db.setActiveOwner('demo-user-1');
+        expect(await db.getDocumentById(privateDocument.id), isNotNull);
+        expect(await db.canEditDocument(privateDocument.id), isFalse);
+        expect(
+          await db.updateDocument(
+            privateDocument.copyWith(title: 'Viewer should not edit'),
+          ),
+          0,
+        );
+        expect(await db.deleteDocument(privateDocument.id), 0);
+        expect(
+          () => db.shareDocument(
+            documentId: privateDocument.id,
+            targetUserId: 'demo-user-3',
+            role: DocumentPermissionRole.viewer,
+          ),
+          throwsStateError,
+        );
+
+        await db.setActiveOwner('demo-user-2');
+        expect(await db.getDocumentById(privateDocument.id), isNotNull);
+        expect(await db.canEditDocument(privateDocument.id), isTrue);
+        expect(
+          await db.updateDocument(
+            privateDocument.copyWith(title: 'Editor can edit'),
+          ),
+          1,
+        );
+        expect(await db.deleteDocument(privateDocument.id), 0);
+
+        await db.setActiveOwner('demo-user-3');
+        expect(await db.getDocumentById(privateDocument.id), isNull);
+        expect(
+          (await db.searchDocuments(query: 'phân quyền'))
+              .any((document) => document.id == privateDocument.id),
+          isFalse,
+        );
+
+        await db.setActiveOwner('local');
+        await db.revokeDocumentShare(
+          documentId: privateDocument.id,
+          targetUserId: 'demo-user-1',
+        );
+        await db.setActiveOwner('demo-user-1');
+        expect(await db.getDocumentById(privateDocument.id), isNull);
+      },
+    );
 
     test('5. Tìm kiếm tài liệu theo từ khóa và bộ lọc (Search)', () async {
       // Tìm kiếm theo từ khóa có trong tiêu đề
@@ -95,31 +203,36 @@ void main() {
       );
 
       // Tìm kiếm theo loại tài liệu (Chỉ lấy bài tập)
-      final searchByType = await db.searchDocuments(type: DocumentType.assignment);
-      expect(searchByType.every((d) => d.type == DocumentType.assignment), isTrue);
+      final searchByType = await db.searchDocuments(
+        type: DocumentType.assignment,
+      );
+      expect(
+        searchByType.every((d) => d.type == DocumentType.assignment),
+        isTrue,
+      );
 
       // Tìm kiếm theo môn học
       final searchBySubject = await db.searchDocuments(subjectId: 'sub_swe');
       expect(searchBySubject.every((d) => d.subjectId == 'sub_swe'), isTrue);
     });
 
-    test('6. Kiểm tra luồng phản ứng dữ liệu (Reactive Stream watchAllDocuments)', () async {
-      expectLater(
-        db.watchAllDocuments,
-        emits(isA<List<DocumentModel>>()),
-      );
+    test(
+      '6. Kiểm tra luồng phản ứng dữ liệu (Reactive Stream watchAllDocuments)',
+      () async {
+        expectLater(db.watchAllDocuments, emits(isA<List<DocumentModel>>()));
 
-      // Thêm 1 tài liệu để kích hoạt Stream phát dữ liệu mới
-      final testDoc = DocumentModel(
-        id: 'reactive_doc_01',
-        title: 'Tài liệu kích hoạt Reactive Stream',
-        subjectId: 'sub_mob',
-        type: DocumentType.reference,
-        createdDate: DateTime.now(),
-        updatedDate: DateTime.now(),
-      );
+        // Thêm 1 tài liệu để kích hoạt Stream phát dữ liệu mới
+        final testDoc = DocumentModel(
+          id: 'reactive_doc_01',
+          title: 'Tài liệu kích hoạt Reactive Stream',
+          subjectId: 'sub_mob',
+          type: DocumentType.reference,
+          createdDate: DateTime.now(),
+          updatedDate: DateTime.now(),
+        );
 
-      await db.insertDocument(testDoc);
-    });
+        await db.insertDocument(testDoc);
+      },
+    );
   });
 }

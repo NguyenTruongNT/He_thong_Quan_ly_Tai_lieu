@@ -12,7 +12,12 @@
           "package_name": "vn.edu.cashew.study_document_manager"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "747752646321-9cl6ahmqo7qtkub0ar6n4agm2rdk1slk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBSfbY1A54zL9tPg1sTfnjEGMBlvfrGJ3w"
@@ -20,7 +25,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "747752646321-9cl6ahmqo7qtkub0ar6n4agm2rdk1slk.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "747752646321-kg5qampf0vd63v3hha6sjk37st0em4il.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "vn.edu.cashew.studyDocumentManager"
+              }
+            }
+          ]
         }
       }
     }

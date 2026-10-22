@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -5,9 +6,10 @@ import '../colors.dart';
 import '../database/databaseGlobal.dart';
 import '../functions.dart';
 import '../struct/document_service.dart';
+import '../struct/firebase_storage_service.dart';
 import '../struct/formatters.dart';
+import '../struct/google_auth_service.dart';
 import '../struct/models/document_models.dart';
-import '../widgets/custom_text_field.dart';
 import '../widgets/framework/page_framework.dart';
 import '../widgets/tags/tag_input_field.dart';
 
@@ -60,7 +62,7 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
   bool _isLoadingSubjects = true;
   bool _isSaving = false;
 
-  bool get isEditing => widget.initialDocument != null;
+  bool get _isEditing => widget.initialDocument != null;
 
   @override
   void initState() {
@@ -229,8 +231,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
 
     final SubjectModel newSubject = SubjectModel(
       id: const Uuid().v4(),
-      name: name,
-      code: code,
+      name: parsed.$2,
+      code: parsed.$1,
       colorValue: AppColors.primary.toARGB32(),
       iconName: 'school',
       createdDate: DateTime.now(),
@@ -249,6 +251,42 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
     }
 
     return newSubject.id;
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const [
+          'pdf',
+          'doc',
+          'docx',
+          'ppt',
+          'pptx',
+          'xls',
+          'xlsx',
+          'txt',
+        ],
+      );
+      if (result.isEmpty || !mounted) return;
+      final file = result.single;
+      final size = await file.length();
+      if (size == null) {
+        throw const FormatException('Không xác định được dung lượng tệp.');
+      }
+      if (size > FirebaseStorageService.maxFileSizeBytes) {
+        throw const FormatException('Tệp vượt quá giới hạn 20 MiB.');
+      }
+      setState(() => _selectedFile = file);
+    } catch (error) {
+      if (mounted) {
+        openSnackbar(
+          context,
+          message: 'Không thể chọn tệp: $error',
+          isError: true,
+        );
+      }
+    }
   }
 
   Future<void> _pickDeadline() async {
@@ -384,6 +422,8 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
           createdDate: now,
           updatedDate: now,
         );
+        _storagePath = uploadedPath;
+      }
 
         await DocumentService.saveDocument(newDocument);
 
@@ -408,6 +448,16 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _subjectController.dispose();
+    _titleController.dispose();
+    _notesController.dispose();
+    _fileUrlController.dispose();
+    _tagsController.dispose();
+    super.dispose();
   }
 
   @override
@@ -795,7 +845,96 @@ class _AddEditDocumentPageState extends State<AddEditDocumentPage> {
                   const SizedBox(height: 40),
                 ],
               ),
+              textInputAction: TextInputAction.next,
             ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                labelText: 'Ghi chú',
+                prefixIcon: Icon(Icons.notes_rounded),
+              ),
+              minLines: 2,
+              maxLines: 5,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _fileUrlController,
+              validator: DocumentService.validateUrl,
+              decoration: const InputDecoration(
+                labelText: 'Liên kết tài liệu (tùy chọn)',
+                prefixIcon: Icon(Icons.link_rounded),
+              ),
+              keyboardType: TextInputType.url,
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _saving ? null : _pickFile,
+              icon: const Icon(Icons.cloud_upload_outlined),
+              label: Text(
+                _selectedFile?.name ??
+                    (_storagePath == null
+                        ? 'Chọn tệp tải lên Firebase'
+                        : 'Thay tệp Firebase hiện tại'),
+              ),
+            ),
+            if (_uploadProgress case final progress?) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(value: progress),
+              Text('Đang tải lên ${(progress * 100).round()}%'),
+            ],
+            if (_storagePath != null && _selectedFile == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Tệp hiện tại: ${FirebaseStorageService.fileNameFromPath(_storagePath!)}',
+                ),
+              ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _tagsController,
+              decoration: const InputDecoration(
+                labelText: 'Thẻ phân loại',
+                hintText: 'Ví dụ: Flutter, bài tập, tham khảo',
+                prefixIcon: Icon(Icons.tag_rounded),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SegmentedButton<PriorityLevel>(
+              segments: const [
+                ButtonSegment(value: PriorityLevel.low, label: Text('Thấp')),
+                ButtonSegment(
+                  value: PriorityLevel.medium,
+                  label: Text('Bình thường'),
+                ),
+                ButtonSegment(value: PriorityLevel.high, label: Text('Cao')),
+              ],
+              selected: {_priority},
+              onSelectionChanged: (values) =>
+                  setState(() => _priority = values.first),
+            ),
+            if (_type == DocumentType.assignment ||
+                _type == DocumentType.exam) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _pickDeadline,
+                icon: const Icon(Icons.event_outlined),
+                label: Text(
+                  _deadline == null
+                      ? 'Đặt hạn hoàn thành'
+                      : DocumentFormatters.formatDateTime(_deadline),
+                ),
+              ),
+            ],
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Tài liệu quan trọng'),
+              value: _isFavorite,
+              onChanged: (value) => setState(() => _isFavorite = value),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

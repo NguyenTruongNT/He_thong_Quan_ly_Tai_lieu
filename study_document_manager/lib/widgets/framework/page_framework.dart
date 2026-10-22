@@ -17,6 +17,7 @@ class PageFramework extends StatelessWidget {
   final bool showBackButton;
   final VoidCallback? onBackPressed;
   final Widget? subtitleWidget;
+  final double? maxWidth;
 
   const PageFramework({
     super.key,
@@ -28,6 +29,7 @@ class PageFramework extends StatelessWidget {
     this.showBackButton = true,
     this.onBackPressed,
     this.subtitleWidget,
+    this.maxWidth = 1040,
   });
 
   @override
@@ -62,7 +64,7 @@ class PageFramework extends StatelessWidget {
         child: Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1040),
+            constraints: BoxConstraints(maxWidth: maxWidth ?? 1040),
             child: SizedBox(width: double.infinity, child: body),
           ),
         ),

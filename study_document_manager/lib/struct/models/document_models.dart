@@ -145,6 +145,72 @@ enum PriorityLevel {
   high,   // 2: Cao / Quan trọng
 }
 
+/// Trạng thái đồng bộ của tài liệu với Cloud (Offline-First)
+enum SyncStatus {
+  /// Chỉ tồn tại cục bộ, chưa từng/không đồng bộ Cloud.
+  localOnly,
+
+  /// Có thay đổi cục bộ đang chờ đẩy lên Cloud.
+  pendingUpload,
+
+  /// Đã xóa cục bộ, đang chờ đẩy thao tác xóa lên Cloud.
+  pendingDelete,
+
+  /// Dữ liệu cục bộ và Cloud đã đồng bộ (khớp checksum/version).
+  synced,
+
+  /// Phát hiện xung đột phiên bản giữa cục bộ và Cloud cần xử lý.
+  conflict,
+}
+
+extension SyncStatusExtension on SyncStatus {
+  String get nameString {
+    switch (this) {
+      case SyncStatus.localOnly:
+        return 'localOnly';
+      case SyncStatus.pendingUpload:
+        return 'pendingUpload';
+      case SyncStatus.pendingDelete:
+        return 'pendingDelete';
+      case SyncStatus.synced:
+        return 'synced';
+      case SyncStatus.conflict:
+        return 'conflict';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case SyncStatus.localOnly:
+        return 'Cục bộ';
+      case SyncStatus.pendingUpload:
+        return 'Chờ tải lên';
+      case SyncStatus.pendingDelete:
+        return 'Chờ xóa';
+      case SyncStatus.synced:
+        return 'Đã đồng bộ';
+      case SyncStatus.conflict:
+        return 'Xung đột';
+    }
+  }
+
+  static SyncStatus fromString(String? val) {
+    switch (val) {
+      case 'synced':
+        return SyncStatus.synced;
+      case 'pendingUpload':
+        return SyncStatus.pendingUpload;
+      case 'pendingDelete':
+        return SyncStatus.pendingDelete;
+      case 'conflict':
+        return SyncStatus.conflict;
+      case 'localOnly':
+      default:
+        return SyncStatus.localOnly;
+    }
+  }
+}
+
 /// Mô hình Môn học (Subject / Course)
 class SubjectModel {
   final String id;
@@ -153,6 +219,7 @@ class SubjectModel {
   final int colorValue;
   final String iconName;
   final DateTime createdDate;
+  final bool isShared;
 
   SubjectModel({
     required this.id,
@@ -161,6 +228,7 @@ class SubjectModel {
     required this.colorValue,
     required this.iconName,
     required this.createdDate,
+    this.isShared = false,
   });
 
   Color get color => Color(colorValue);
@@ -184,6 +252,7 @@ class SubjectModel {
       colorValue: map['color'] as int,
       iconName: map['icon'] as String,
       createdDate: DateTime.fromMillisecondsSinceEpoch(map['created_date'] as int),
+      isShared: map['owner_id'] == '__shared__',
     );
   }
 }
@@ -196,6 +265,7 @@ class DocumentModel {
   final DocumentType type;
   final String notes;
   final String fileUrl;
+  final String? storagePath;
   final List<String> tags;
   final DocumentStatus status;
   final PriorityLevel priority;
@@ -203,6 +273,45 @@ class DocumentModel {
   final DateTime? deadline;
   final DateTime createdDate;
   final DateTime updatedDate;
+  final bool isShared;
+
+  // -------- Thuộc tính mở rộng TH2: Bản đồ/Vị trí & Thể loại --------
+  /// Tọa độ vĩ độ (vd: 21.0074) để ghim vị trí tài liệu trên bản đồ
+  final double? latitude;
+
+  /// Tọa độ kinh độ (vd: 105.8247) để ghim vị trí tài liệu trên bản đồ
+  final double? longitude;
+
+  /// Tên vị trí lưu trữ vật lý mô tả (vd: "Tủ B3, Thư viện Tạ Quang Bửu")
+  final String? locationName;
+
+  /// true: Sách/giáo trình/đề thi vật lý; false: File số
+  final bool isPhysical;
+
+  // -------- Trường phục vụ đồng bộ Offline-First (schema v3) --------
+  /// Checksum MD5/SHA-256 của tệp đính kèm (kiểm tra tính toàn vẹn).
+  final String? checksum;
+
+  /// Thuật toán checksum đang dùng: 'md5' hoặc 'sha256'.
+  final String checksumAlgorithm;
+
+  /// Số phiên bản, tăng mỗi lần chỉnh sửa để phát hiện xung đột.
+  final int version;
+
+  /// Trạng thái đồng bộ với Cloud.
+  final SyncStatus syncStatus;
+
+  /// Đánh dấu xóa mềm cục bộ (tombstone).
+  final bool isDeleted;
+
+  /// Đường dẫn tệp cache cục bộ dùng khi Offline.
+  final String? localPath;
+
+  /// Thời điểm tài liệu được cập nhật trên Cloud.
+  final DateTime? remoteUpdatedAt;
+
+  /// Lần đồng bộ thành công gần nhất với Cloud.
+  final DateTime? lastSyncedAt;
 
   DocumentModel({
     required this.id,
@@ -211,6 +320,7 @@ class DocumentModel {
     required this.type,
     this.notes = '',
     this.fileUrl = '',
+    this.storagePath,
     this.tags = const [],
     this.status = DocumentStatus.pending,
     this.priority = PriorityLevel.medium,
@@ -218,6 +328,19 @@ class DocumentModel {
     this.deadline,
     required this.createdDate,
     required this.updatedDate,
+    this.isShared = false,
+    this.latitude,
+    this.longitude,
+    this.locationName,
+    this.isPhysical = false,
+    this.checksum,
+    this.checksumAlgorithm = 'sha256',
+    this.version = 1,
+    this.syncStatus = SyncStatus.localOnly,
+    this.isDeleted = false,
+    this.localPath,
+    this.remoteUpdatedAt,
+    this.lastSyncedAt,
   });
 
   /// Chuyển đổi sang Map để lưu trữ trong SQLite
@@ -229,6 +352,7 @@ class DocumentModel {
       'type': type.nameString,
       'notes': notes,
       'file_url': fileUrl,
+      'storage_path': storagePath,
       'tags': tags.join(','),
       'status': status.nameString,
       'priority': priority.index,
@@ -236,6 +360,18 @@ class DocumentModel {
       'deadline': deadline?.millisecondsSinceEpoch,
       'created_date': createdDate.millisecondsSinceEpoch,
       'updated_date': updatedDate.millisecondsSinceEpoch,
+      'latitude': latitude,
+      'longitude': longitude,
+      'location_name': locationName,
+      'is_physical': isPhysical ? 1 : 0,
+      'checksum': checksum,
+      'checksum_algo': checksumAlgorithm,
+      'version': version,
+      'sync_status': syncStatus.nameString,
+      'is_deleted': isDeleted ? 1 : 0,
+      'local_path': localPath,
+      'remote_updated_at': remoteUpdatedAt?.millisecondsSinceEpoch,
+      'last_synced_at': lastSyncedAt?.millisecondsSinceEpoch,
     };
   }
 
@@ -253,6 +389,7 @@ class DocumentModel {
       type: DocumentTypeExtension.fromString(map['type'] as String?),
       notes: map['notes'] as String? ?? '',
       fileUrl: map['file_url'] as String? ?? '',
+      storagePath: map['storage_path'] as String?,
       tags: parsedTags,
       status: DocumentStatusExtension.fromString(map['status'] as String?),
       priority: PriorityLevel.values[(map['priority'] as int? ?? 1).clamp(0, 2)],
@@ -262,6 +399,23 @@ class DocumentModel {
           : null,
       createdDate: DateTime.fromMillisecondsSinceEpoch(map['created_date'] as int),
       updatedDate: DateTime.fromMillisecondsSinceEpoch(map['updated_date'] as int),
+      isShared: map['owner_id'] == '__shared__',
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
+      locationName: map['location_name'] as String?,
+      isPhysical: ((map['is_physical'] as int?) ?? 0) == 1,
+      checksum: map['checksum'] as String?,
+      checksumAlgorithm: map['checksum_algo'] as String? ?? 'sha256',
+      version: (map['version'] as int?) ?? 1,
+      syncStatus: SyncStatusExtension.fromString(map['sync_status'] as String?),
+      isDeleted: ((map['is_deleted'] as int?) ?? 0) == 1,
+      localPath: map['local_path'] as String?,
+      remoteUpdatedAt: map['remote_updated_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['remote_updated_at'] as int)
+          : null,
+      lastSyncedAt: map['last_synced_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['last_synced_at'] as int)
+          : null,
     );
   }
 
@@ -273,6 +427,7 @@ class DocumentModel {
     DocumentType? type,
     String? notes,
     String? fileUrl,
+    String? storagePath,
     List<String>? tags,
     DocumentStatus? status,
     PriorityLevel? priority,
@@ -280,6 +435,19 @@ class DocumentModel {
     DateTime? deadline,
     DateTime? createdDate,
     DateTime? updatedDate,
+    bool? isShared,
+    double? latitude,
+    double? longitude,
+    String? locationName,
+    bool? isPhysical,
+    String? checksum,
+    String? checksumAlgorithm,
+    int? version,
+    SyncStatus? syncStatus,
+    bool? isDeleted,
+    String? localPath,
+    DateTime? remoteUpdatedAt,
+    DateTime? lastSyncedAt,
   }) {
     return DocumentModel(
       id: id ?? this.id,
@@ -288,6 +456,7 @@ class DocumentModel {
       type: type ?? this.type,
       notes: notes ?? this.notes,
       fileUrl: fileUrl ?? this.fileUrl,
+      storagePath: storagePath ?? this.storagePath,
       tags: tags ?? this.tags,
       status: status ?? this.status,
       priority: priority ?? this.priority,
@@ -295,6 +464,19 @@ class DocumentModel {
       deadline: deadline ?? this.deadline,
       createdDate: createdDate ?? this.createdDate,
       updatedDate: updatedDate ?? DateTime.now(),
+      isShared: isShared ?? this.isShared,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      locationName: locationName ?? this.locationName,
+      isPhysical: isPhysical ?? this.isPhysical,
+      checksum: checksum ?? this.checksum,
+      checksumAlgorithm: checksumAlgorithm ?? this.checksumAlgorithm,
+      version: version ?? this.version,
+      syncStatus: syncStatus ?? this.syncStatus,
+      isDeleted: isDeleted ?? this.isDeleted,
+      localPath: localPath ?? this.localPath,
+      remoteUpdatedAt: remoteUpdatedAt ?? this.remoteUpdatedAt,
+      lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
     );
   }
 }
